@@ -22,14 +22,14 @@ let packageSettings = PackageSettings(
 #endif
 
 let package = Package(
-    name: "ClaudeBar",
+    name: "MyMeter",
     dependencies: [
         // Add your own dependencies here:
         // .package(url: "https://github.com/Alamofire/Alamofire", from: "5.0.0"),
         // You can read more about dependencies here: https://docs.tuist.io/documentation/tuist/dependencies
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.8.1"),
         .package(url: "https://github.com/Kolos65/Mockable.git", from: "0.5.0"),
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.12.0"),
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.13.0"),
         .package(url: "https://github.com/awslabs/aws-sdk-swift", exact: "1.6.99"),
         .package(url: "https://github.com/steipete/SweetCookieKit.git", from: "0.3.0"),
         // Exposes MenuBarExtra's underlying NSStatusItem so the menu-bar label

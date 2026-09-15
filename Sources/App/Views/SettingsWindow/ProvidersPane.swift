@@ -246,6 +246,10 @@ private struct ProviderDetailView: View {
             ZaiConfigCard(monitor: monitor)
         case "bedrock":
             BedrockConfigCard(monitor: monitor)
+        case "cursor":
+            CursorConfigCard(monitor: monitor)
+        case "grok":
+            GrokConfigCard(monitor: monitor)
         default:
             if let extProvider = provider as? ExtensionProvider, extProvider.manifest.hasConfig {
                 ExtensionConfigCard(

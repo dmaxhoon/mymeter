@@ -4,8 +4,11 @@ import Domain
 /// Grok Build (xAI) usage probe that fetches credit usage from the same
 /// billing endpoint the `grok` CLI uses.
 ///
-/// Uses the OAuth credentials from `~/.grok/auth.json`, refreshing expired
-/// tokens against the OIDC issuer recorded alongside them.
+/// Uses the OAuth credentials from `$GROK_HOME/auth.json` (default `~/.grok`).
+/// Expired tokens are refreshed by the `grok` CLI itself when a
+/// ``GrokCLITokenRefresher`` is provided (so the CLI stays the only writer of
+/// `auth.json`), falling back to a direct refresh against the OIDC issuer
+/// recorded alongside the token.
 ///
 /// Usage URL: `https://cli-chat-proxy.grok.com/v1/billing?format=credits`
 /// Token Refresh URL: `{oidc_issuer}/oauth2/token` (defaults to `https://auth.x.ai`)
@@ -13,6 +16,8 @@ public struct GrokUsageProbe: UsageProbe, @unchecked Sendable {
     private let credentialLoader: GrokCredentialLoader
     private let networkClient: any NetworkClient
     private let timeout: TimeInterval
+    private let preferredEntryKey: String?
+    private let cliRefresher: GrokCLITokenRefresher?
 
     private static let billingURL = URL(string: "https://cli-chat-proxy.grok.com/v1/billing?format=credits")!
     private static let defaultIssuer = "https://auth.x.ai"
@@ -21,19 +26,23 @@ public struct GrokUsageProbe: UsageProbe, @unchecked Sendable {
     public init(
         credentialLoader: GrokCredentialLoader = GrokCredentialLoader(),
         networkClient: any NetworkClient = URLSession.shared,
-        timeout: TimeInterval = 15
+        timeout: TimeInterval = 15,
+        preferredEntryKey: String? = nil,
+        cliRefresher: GrokCLITokenRefresher? = nil
     ) {
         self.credentialLoader = credentialLoader
         self.networkClient = networkClient
         self.timeout = timeout
+        self.preferredEntryKey = preferredEntryKey
+        self.cliRefresher = cliRefresher
     }
 
     public func isAvailable() async -> Bool {
-        credentialLoader.loadCredentials() != nil
+        credentialLoader.loadCredentials(entryKey: preferredEntryKey) != nil
     }
 
     public func probe() async throws -> UsageSnapshot {
-        guard var credentials = credentialLoader.loadCredentials() else {
+        guard var credentials = credentialLoader.loadCredentials(entryKey: preferredEntryKey) else {
             AppLog.probes.error("Grok: No credentials found")
             throw ProbeError.authenticationRequired
         }
@@ -70,6 +79,38 @@ public struct GrokUsageProbe: UsageProbe, @unchecked Sendable {
     // MARK: - Token Refresh
 
     private func refreshToken(_ credentials: GrokCredentialResult) async throws -> GrokCredentialResult {
+        if let refreshed = await refreshViaCLI(credentials) {
+            return refreshed
+        }
+        return try await refreshViaIssuer(credentials)
+    }
+
+    /// Asks the `grok` CLI to rotate the token in place, then re-reads the file.
+    /// Returns `nil` when delegation is unavailable or the token did not change,
+    /// so the caller can fall back to the in-app refresh.
+    private func refreshViaCLI(_ credentials: GrokCredentialResult) async -> GrokCredentialResult? {
+        guard let cliRefresher, let grokHome = credentialLoader.cliGrokHome else {
+            return nil
+        }
+
+        AppLog.probes.info("Grok: Delegating token refresh to grok CLI...")
+        guard await cliRefresher.refresh(grokHome: grokHome) else {
+            AppLog.probes.warning("Grok: CLI refresh unavailable or failed, falling back to in-app refresh")
+            return nil
+        }
+
+        guard let reloaded = credentialLoader.loadCredentials(entryKey: credentials.entryKey),
+              reloaded.entryKey == credentials.entryKey,
+              reloaded.accessToken != credentials.accessToken else {
+            AppLog.probes.warning("Grok: CLI did not rotate the token, falling back to in-app refresh")
+            return nil
+        }
+
+        AppLog.probes.info("Grok: Token refreshed by grok CLI")
+        return reloaded
+    }
+
+    private func refreshViaIssuer(_ credentials: GrokCredentialResult) async throws -> GrokCredentialResult {
         guard let refreshToken = credentials.refreshToken else {
             AppLog.probes.error("Grok: No refresh token available")
             throw ProbeError.sessionExpired(hint: Self.reloginHint)

@@ -160,6 +160,45 @@ struct CodexUsageProbeRPCTests {
         // Then - verify shutdown was called
         verify(mockClient).shutdown().called(.atLeastOnce)
     }
+
+    @Test
+    func `probe maps individualLimit to monthly quota`() async throws {
+        let mockClient = MockCodexRPCClient()
+        given(mockClient).fetchRateLimits().willReturn(
+            CodexRateLimitsResponse(
+                primary: CodexRateLimitWindow(usedPercent: 20, resetDescription: nil),
+                secondary: nil,
+                individualLimit: CodexIndividualLimit(remainingPercent: 68)
+            )
+        )
+        given(mockClient).shutdown().willReturn(())
+
+        let probe = CodexUsageProbe(client: mockClient)
+        let snapshot = try await probe.probe()
+
+        #expect(snapshot.quota(for: .timeLimit("Monthly"))?.percentRemaining == 68)
+        #expect(snapshot.sessionQuota?.percentRemaining == 80)
+    }
+
+    @Test
+    func `probe returns monthly-only snapshot for enterprise credit accounts`() async throws {
+        let mockClient = MockCodexRPCClient()
+        given(mockClient).fetchRateLimits().willReturn(
+            CodexRateLimitsResponse(
+                primary: nil,
+                secondary: nil,
+                planType: "enterprise",
+                individualLimit: CodexIndividualLimit(remainingPercent: 42)
+            )
+        )
+        given(mockClient).shutdown().willReturn(())
+
+        let probe = CodexUsageProbe(client: mockClient)
+        let snapshot = try await probe.probe()
+
+        #expect(snapshot.quotas.count == 1)
+        #expect(snapshot.quota(for: .timeLimit("Monthly"))?.percentRemaining == 42)
+    }
 }
 
 // MARK: - Mapping Tests
@@ -228,5 +267,80 @@ struct CodexRateLimitsToSnapshotMappingTests {
         let snapshot = try CodexUsageProbe.mapRateLimitsToSnapshot(response)
 
         #expect(snapshot.providerId == "codex")
+    }
+
+    @Test
+    func `maps individualLimit to monthly quota`() throws {
+        let resetsAt = Date(timeIntervalSince1970: 1_778_137_680)
+        let response = CodexRateLimitsResponse(
+            primary: nil,
+            secondary: nil,
+            individualLimit: CodexIndividualLimit(
+                remainingPercent: 68,
+                resetDescription: "Resets in 1d",
+                resetsAt: resetsAt,
+                used: 8_000,
+                limit: 25_000
+            )
+        )
+
+        let snapshot = try CodexUsageProbe.mapRateLimitsToSnapshot(response)
+        let monthly = snapshot.quota(for: .timeLimit("Monthly"))
+
+        #expect(snapshot.quotas.count == 1)
+        #expect(monthly?.percentRemaining == 68)
+        #expect(monthly?.resetText == "8,000 / 25,000 credits")
+        #expect(monthly?.usageCaption == "8,000 / 25,000 credits")
+        #expect(monthly?.resetsAt == resetsAt)
+        #expect(monthly?.providerId == "codex")
+    }
+
+    @Test
+    func `maps fractional individualLimit used and limit onto monthly caption`() throws {
+        let response = CodexRateLimitsResponse(
+            primary: nil,
+            secondary: nil,
+            individualLimit: CodexIndividualLimit(
+                remainingPercent: 14,
+                used: 5_186.841861009598,
+                limit: 6_000
+            )
+        )
+
+        let snapshot = try CodexUsageProbe.mapRateLimitsToSnapshot(response)
+        let monthly = snapshot.quota(for: .timeLimit("Monthly"))
+
+        #expect(monthly?.percentRemaining == 14)
+        #expect(monthly?.resetText == "5,187 / 6,000 credits")
+        #expect(monthly?.usageCaption == "5,187 / 6,000 credits")
+    }
+
+    @Test
+    func `maps individualLimit alongside session and weekly quotas`() throws {
+        let response = CodexRateLimitsResponse(
+            primary: CodexRateLimitWindow(usedPercent: 30, resetDescription: nil),
+            secondary: CodexRateLimitWindow(usedPercent: 60, resetDescription: nil),
+            individualLimit: CodexIndividualLimit(remainingPercent: 68)
+        )
+
+        let snapshot = try CodexUsageProbe.mapRateLimitsToSnapshot(response)
+
+        #expect(snapshot.quotas.count == 3)
+        #expect(snapshot.sessionQuota?.percentRemaining == 70)
+        #expect(snapshot.weeklyQuota?.percentRemaining == 40)
+        #expect(snapshot.quota(for: .timeLimit("Monthly"))?.percentRemaining == 68)
+    }
+
+    @Test
+    func `does not map monthly quota when individualLimit is absent`() throws {
+        let response = CodexRateLimitsResponse(
+            primary: CodexRateLimitWindow(usedPercent: 10, resetDescription: nil),
+            secondary: nil
+        )
+
+        let snapshot = try CodexUsageProbe.mapRateLimitsToSnapshot(response)
+
+        #expect(snapshot.quota(for: .timeLimit("Monthly")) == nil)
+        #expect(snapshot.quotas.count == 1)
     }
 }

@@ -479,21 +479,21 @@ public final class UserDefaultsProviderSettingsRepository: ZaiSettingsRepository
         // MiniMax settings (key strings kept for backward compatibility 保持向后兼容)
         static let minimaxRegion = "providerConfig.minimaxRegion"
         static let minimaxiAuthEnvVar = "providerConfig.minimaxiAuthEnvVar"
-        static let minimaxiApiKey = "com.claudebar.credentials.minimaxi-api-key"
+        static let minimaxiApiKey = "com.mymeter.credentials.minimaxi-api-key"
         // DeepSeek settings
         static let deepseekAuthEnvVar = "providerConfig.deepseekAuthEnvVar"
-        static let deepseekApiKey = "com.claudebar.credentials.deepseek-api-key"
+        static let deepseekApiKey = "com.mymeter.credentials.deepseek-api-key"
         // Vercel AI Gateway settings
         static let vercelAuthEnvVar = "providerConfig.vercelAuthEnvVar"
-        static let vercelApiKey = "com.claudebar.credentials.vercel-api-key"
+        static let vercelApiKey = "com.mymeter.credentials.vercel-api-key"
         // Alibaba settings
         static let alibabaRegion = "providerConfig.alibabaRegion"
         static let alibabaCookieSource = "providerConfig.alibabaCookieSource"
-        static let alibabaManualCookie = "com.claudebar.credentials.alibaba-manual-cookie"
-        static let alibabaApiKey = "com.claudebar.credentials.alibaba-api-key"
+        static let alibabaManualCookie = "com.mymeter.credentials.alibaba-manual-cookie"
+        static let alibabaApiKey = "com.mymeter.credentials.alibaba-api-key"
         // Credentials (kept compatible with old UserDefaultsCredentialRepository keys)
-        static let githubToken = "com.claudebar.credentials.github-copilot-token"
-        static let githubUsername = "com.claudebar.credentials.github-username"
+        static let githubToken = "com.mymeter.credentials.github-copilot-token"
+        static let githubUsername = "com.mymeter.credentials.github-username"
     }
 
     /// Generates the UserDefaults key for a provider's enabled state

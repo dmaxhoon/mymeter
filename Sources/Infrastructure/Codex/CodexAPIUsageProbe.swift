@@ -269,6 +269,10 @@ public struct CodexAPIUsageProbe: UsageProbe, @unchecked Sendable {
             }
         }
 
+        if let monthly = parseIndividualLimitQuota(from: responseDict) {
+            quotas.append(monthly)
+        }
+
         // Parse credits
         var costUsage: CostUsage?
         let creditsHeader = readHeaderDouble(httpResponse, key: "x-codex-credits-balance")
@@ -357,6 +361,64 @@ public struct CodexAPIUsageProbe: UsageProbe, @unchecked Sendable {
         default:
             return .custom(planType.uppercased())
         }
+    }
+
+    private func parseIndividualLimitQuota(from response: [String: Any]) -> UsageQuota? {
+        guard let spendControl = response["spend_control"] as? [String: Any],
+              let individual = spendControl["individual_limit"] as? [String: Any] else {
+            return nil
+        }
+
+        let remainingPercent: Double?
+        if let remaining = jsonNumber(individual["remaining_percent"]) ?? jsonNumber(individual["remainingPercent"]) {
+            remainingPercent = remaining
+        } else if let usedPercent = jsonNumber(individual["used_percent"]) ?? jsonNumber(individual["usedPercent"]) {
+            remainingPercent = max(0, 100 - usedPercent)
+        } else if let used = jsonNumber(individual["used"]), let limit = jsonNumber(individual["limit"]), limit > 0 {
+            remainingPercent = ((limit - used) / limit) * 100
+        } else {
+            remainingPercent = nil
+        }
+
+        guard let remainingPercent else { return nil }
+
+        let resetsAt = jsonDate(individual["reset_at"]) ?? jsonDate(individual["resetsAt"])
+        let used = jsonNumber(individual["used"])
+        let limit = jsonNumber(individual["limit"])
+        let resetText: String?
+        if let used, let limit {
+            resetText = CodexIndividualLimit.formattedUsage(used: used, limit: limit)
+        } else {
+            resetText = formatResetText(resetsAt)
+        }
+        return UsageQuota(
+            percentRemaining: remainingPercent,
+            quotaType: .timeLimit("Monthly"),
+            providerId: "codex",
+            resetsAt: resetsAt,
+            resetText: resetText
+        )
+    }
+
+    private func jsonNumber(_ value: Any?) -> Double? {
+        switch value {
+        case let number as Double:
+            return number
+        case let number as Int:
+            return Double(number)
+        case let number as NSNumber:
+            return number.doubleValue
+        case let string as String:
+            let cleaned = string.replacingOccurrences(of: ",", with: "")
+            return Double(cleaned)
+        default:
+            return nil
+        }
+    }
+
+    private func jsonDate(_ value: Any?) -> Date? {
+        guard let interval = jsonNumber(value) else { return nil }
+        return Date(timeIntervalSince1970: interval)
     }
 
     private func extractErrorCode(from errorData: [String: Any]) -> String? {

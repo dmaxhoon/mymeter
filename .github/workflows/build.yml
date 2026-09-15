@@ -34,7 +34,7 @@ jobs:
           ./scripts/fix-swiftterm-metal.sh
 
       - name: Build Debug
-        run: xcodebuild build -scheme ClaudeBar -workspace ClaudeBar.xcworkspace -destination 'platform=macOS,arch=arm64'
+        run: xcodebuild build -scheme MyMeter -workspace MyMeter.xcworkspace -destination 'platform=macOS,arch=arm64'
 
       - name: Build Release
-        run: xcodebuild build -scheme ClaudeBar -workspace ClaudeBar.xcworkspace -destination 'platform=macOS,arch=arm64' -configuration Release
+        run: xcodebuild build -scheme MyMeter -workspace MyMeter.xcworkspace -destination 'platform=macOS,arch=arm64' -configuration Release

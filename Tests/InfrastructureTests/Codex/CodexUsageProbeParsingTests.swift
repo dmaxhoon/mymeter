@@ -146,6 +146,63 @@ struct CodexUsageProbeParsingTests {
         #expect(snapshot.sessionQuota?.percentRemaining == 65)
     }
 
+    // MARK: - Monthly Credit Limit
+
+    static let monthlyCreditLimitOutput = """
+    Monthly Credit Limit
+    ████████████████░░░░ 68% remaining
+    8,000 of 25,000 credits used
+    """
+
+    static let monthlyCreditLimitLeftOutput = """
+     Monthly credit limit:   [████████████████░░░░] 68% left (resets 07:08 on 7 May)
+                             8,000 of 25,000 credits used
+    """
+
+    static let monthlyCreditsUsedOnlyOutput = """
+    Monthly Credit Limit
+    8,000 of 25,000 credits used
+    """
+
+    @Test
+    func `parses monthly credit limit remaining percent`() throws {
+        let snapshot = try simulateParse(text: Self.monthlyCreditLimitOutput)
+        let monthly = snapshot.quota(for: .timeLimit("Monthly"))
+        #expect(monthly?.percentRemaining == 68)
+        #expect(monthly?.resetText == "8,000 / 25,000 credits")
+    }
+
+    @Test
+    func `parses monthly credit limit with percent left`() throws {
+        let snapshot = try simulateParse(text: Self.monthlyCreditLimitLeftOutput)
+        #expect(snapshot.quota(for: .timeLimit("Monthly"))?.percentRemaining == 68)
+    }
+
+    @Test
+    func `parses monthly credits used as remaining percent when percent is missing`() throws {
+        let snapshot = try simulateParse(text: Self.monthlyCreditsUsedOnlyOutput)
+        #expect(snapshot.quota(for: .timeLimit("Monthly"))?.percentRemaining == 68)
+    }
+
+    @Test
+    func `parses monthly credit limit alongside five hour and weekly limits`() throws {
+        let output = """
+        5h limit
+        ████████████████░░░░ 65% left
+
+        Weekly limit
+        ██████████░░░░░░░░░░ 35% left
+
+        Monthly Credit Limit
+        ████████████████░░░░ 68% remaining
+        8,000 of 25,000 credits used
+        """
+        let snapshot = try simulateParse(text: output)
+        #expect(snapshot.sessionQuota?.percentRemaining == 65)
+        #expect(snapshot.weeklyQuota?.percentRemaining == 35)
+        #expect(snapshot.quota(for: .timeLimit("Monthly"))?.percentRemaining == 68)
+    }
+
     // MARK: - Helper
 
     private func simulateParse(text: String) throws -> UsageSnapshot {

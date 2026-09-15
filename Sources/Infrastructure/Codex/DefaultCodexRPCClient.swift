@@ -12,6 +12,10 @@ public final class DefaultCodexRPCClient: CodexRPCClient, @unchecked Sendable {
     /// Package-internal: allows tests to inject a mock transport for the production (no-injection) code path.
     var transportFactory: ((String, [String]) throws -> RPCTransport)?
 
+    /// How long `codex app-server` may sit silent before we kill it and try TTY.
+    /// A hung RPC leaves the last snapshot on screen indefinitely (no `lastError`).
+    var rpcTimeout: TimeInterval = 20
+
     /// Default initializer - uses real CLI executor and creates transport lazily.
     public init(executable: String = "codex", cliExecutor: CLIExecutor? = nil) {
         self.executable = executable
@@ -82,9 +86,34 @@ public final class DefaultCodexRPCClient: CodexRPCClient, @unchecked Sendable {
             }
         }
 
+        return try await withThrowingTaskGroup(of: CodexRateLimitsResponse.self) { group in
+            group.addTask {
+                try await self.performRPC(transport: activeTransport)
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(self.rpcTimeout))
+                throw ProbeError.timeout
+            }
+
+            do {
+                guard let result = try await group.next() else {
+                    throw ProbeError.timeout
+                }
+                group.cancelAll()
+                return result
+            } catch {
+                // Unblock `receive()` waiting on a silent app-server before TTY fallback.
+                activeTransport.close()
+                group.cancelAll()
+                throw error
+            }
+        }
+    }
+
+    private func performRPC(transport activeTransport: RPCTransport) async throws -> CodexRateLimitsResponse {
         // Initialize RPC connection
         _ = try await request(transport: activeTransport, method: "initialize", params: [
-            "clientInfo": ["name": "claudebar", "version": "1.0.0"]
+            "clientInfo": ["name": "mymeter", "version": "1.0.0"]
         ])
         try sendNotification(transport: activeTransport, method: "initialized")
 
@@ -112,9 +141,10 @@ public final class DefaultCodexRPCClient: CodexRPCClient, @unchecked Sendable {
 
         let primary = parseWindow(rateLimits["primary"])
         let secondary = parseWindow(rateLimits["secondary"])
+        let individualLimit = parseIndividualLimit(rateLimits["individualLimit"])
 
         // If plan is free and no limits, create default "unlimited" quotas
-        if primary == nil && secondary == nil {
+        if primary == nil && secondary == nil && individualLimit == nil {
             if planType == "free" {
                 AppLog.probes.info("Codex free plan - returning unlimited quotas")
                 return CodexRateLimitsResponse(
@@ -127,7 +157,12 @@ public final class DefaultCodexRPCClient: CodexRPCClient, @unchecked Sendable {
             throw ProbeError.parseFailed("No rate limits available yet - make some API calls first")
         }
 
-        return CodexRateLimitsResponse(primary: primary, secondary: secondary, planType: planType)
+        return CodexRateLimitsResponse(
+            primary: primary,
+            secondary: secondary,
+            planType: planType,
+            individualLimit: individualLimit
+        )
     }
 
     // MARK: - TTY Fallback
@@ -155,62 +190,27 @@ public final class DefaultCodexRPCClient: CodexRPCClient, @unchecked Sendable {
     }
 
     private func parseTTYOutput(_ text: String) throws -> CodexRateLimitsResponse {
-        let clean = CodexUsageProbe.stripANSICodes(text)
+        let snapshot = try CodexUsageProbe.parse(text)
 
-        // Check for errors
-        if let error = CodexUsageProbe.extractUsageError(clean) {
-            throw error
+        let primary = snapshot.sessionQuota.map {
+            CodexRateLimitWindow(usedPercent: 100 - $0.percentRemaining, resetDescription: $0.resetText)
+        }
+        let secondary = snapshot.weeklyQuota.map {
+            CodexRateLimitWindow(usedPercent: 100 - $0.percentRemaining, resetDescription: $0.resetText)
+        }
+        let individualLimit = snapshot.quota(for: .timeLimit("Monthly")).map {
+            CodexIndividualLimit(
+                remainingPercent: $0.percentRemaining,
+                resetDescription: $0.resetText,
+                resetsAt: $0.resetsAt
+            )
         }
 
-        let fiveHourPct = extractTTYPercent(labelSubstring: "5h limit", text: clean)
-        let weeklyPct = extractTTYPercent(labelSubstring: "Weekly limit", text: clean)
-
-        var primary: CodexRateLimitWindow?
-        var secondary: CodexRateLimitWindow?
-
-        if let pct = fiveHourPct {
-            // TTY shows "% left", convert to usedPercent
-            primary = CodexRateLimitWindow(usedPercent: Double(100 - pct), resetDescription: nil)
-        }
-
-        if let pct = weeklyPct {
-            secondary = CodexRateLimitWindow(usedPercent: Double(100 - pct), resetDescription: nil)
-        }
-
-        guard primary != nil || secondary != nil else {
-            throw ProbeError.parseFailed("Could not find usage limits in Codex output")
-        }
-
-        return CodexRateLimitsResponse(primary: primary, secondary: secondary)
-    }
-
-    private func extractTTYPercent(labelSubstring: String, text: String) -> Int? {
-        let lines = text.components(separatedBy: .newlines)
-        let label = labelSubstring.lowercased()
-
-        for (idx, line) in lines.enumerated() where line.lowercased().contains(label) {
-            let window = lines.dropFirst(idx).prefix(12)
-            for candidate in window {
-                if let pct = ttyPercentFromLine(candidate) {
-                    return pct
-                }
-            }
-        }
-        return nil
-    }
-
-    private func ttyPercentFromLine(_ line: String) -> Int? {
-        let pattern = #"([0-9]{1,3})%\s+left"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-            return nil
-        }
-        let range = NSRange(line.startIndex..<line.endIndex, in: line)
-        guard let match = regex.firstMatch(in: line, options: [], range: range),
-              match.numberOfRanges >= 2,
-              let valRange = Range(match.range(at: 1), in: line) else {
-            return nil
-        }
-        return Int(line[valRange])
+        return CodexRateLimitsResponse(
+            primary: primary,
+            secondary: secondary,
+            individualLimit: individualLimit
+        )
     }
 
     // MARK: - Parsing Helpers
@@ -235,6 +235,58 @@ public final class DefaultCodexRPCClient: CodexRPCClient, @unchecked Sendable {
         }
 
         return CodexRateLimitWindow(usedPercent: usedPercent, resetDescription: resetDescription)
+    }
+
+    internal func parseIndividualLimit(_ value: Any?) -> CodexIndividualLimit? {
+        guard let dict = value as? [String: Any] else { return nil }
+
+        let used = jsonNumber(dict["used"])
+        let limit = jsonNumber(dict["limit"])
+
+        let remainingPercent: Double?
+        if let remaining = jsonNumber(dict["remainingPercent"]) ?? jsonNumber(dict["remaining_percent"]) {
+            remainingPercent = remaining
+        } else if let usedPercent = jsonNumber(dict["usedPercent"]) ?? jsonNumber(dict["used_percent"]) {
+            remainingPercent = max(0, 100 - usedPercent)
+        } else if let used, let limit, limit > 0 {
+            remainingPercent = ((limit - used) / limit) * 100
+        } else {
+            remainingPercent = nil
+        }
+
+        guard let remainingPercent else { return nil }
+
+        let resetsAt = jsonDate(dict["resetsAt"]) ?? jsonDate(dict["reset_at"])
+        let resetDescription = resetsAt.map { formatResetTime($0) }
+
+        return CodexIndividualLimit(
+            remainingPercent: remainingPercent,
+            resetDescription: resetDescription,
+            resetsAt: resetsAt,
+            used: used,
+            limit: limit
+        )
+    }
+
+    private func jsonNumber(_ value: Any?) -> Double? {
+        switch value {
+        case let number as Double:
+            return number
+        case let number as Int:
+            return Double(number)
+        case let number as NSNumber:
+            return number.doubleValue
+        case let string as String:
+            let cleaned = string.replacingOccurrences(of: ",", with: "")
+            return Double(cleaned)
+        default:
+            return nil
+        }
+    }
+
+    private func jsonDate(_ value: Any?) -> Date? {
+        guard let interval = jsonNumber(value) else { return nil }
+        return Date(timeIntervalSince1970: interval)
     }
 
     internal func formatResetTime(_ date: Date) -> String {

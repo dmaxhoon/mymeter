@@ -14,6 +14,8 @@ public final class ProcessRPCTransport: RPCTransport, @unchecked Sendable {
     private let process: Process
     private let stdinPipe: Pipe
     private let stdoutPipe: Pipe
+    private let closeLock = NSLock()
+    private var didClose = false
 
     public init(executable: String, arguments: [String], environment: [String: String]? = nil) throws {
         self.process = Process()
@@ -71,6 +73,11 @@ public final class ProcessRPCTransport: RPCTransport, @unchecked Sendable {
     }
 
     public func close() {
+        closeLock.lock()
+        defer { closeLock.unlock() }
+        guard !didClose else { return }
+        didClose = true
+
         // Closing stdin is the graceful exit for `codex app-server`: it sees EOF
         // and shuts down on its own, without needing a signal.
         try? stdinPipe.fileHandleForWriting.close()

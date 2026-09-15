@@ -45,7 +45,7 @@ Use `@State` to own `@Observable` objects in views:
 
 ```swift
 @main
-struct ClaudeBarApp: App {
+struct MyMeterApp: App {
     @State private var appState = AppState()
 
     var body: some Scene {

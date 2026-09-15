@@ -1,11 +1,11 @@
 import Foundation
 import Domain
 
-/// Installs and uninstalls ClaudeBar hooks in ~/.claude/settings.json.
-/// Hook commands use the __claudebar_hook function wrapper for identification.
+/// Installs and uninstalls MyMeter hooks in ~/.claude/settings.json.
+/// Hook commands use the __mymeter_hook function wrapper for identification.
 public enum HookInstaller {
-    /// The marker function name used to identify ClaudeBar hooks
-    static let hookMarker = "__claudebar_hook"
+    /// The marker function name used to identify MyMeter hooks
+    static let hookMarker = "__mymeter_hook"
 
     /// The settings file path
     public static var settingsPath: String {
@@ -15,7 +15,7 @@ public enum HookInstaller {
 
     /// The hook command template. Port is read from the discovery file at runtime.
     static let hookCommand = """
-    __claudebar_hook() { PORT=$(cat "$HOME/.claude/claudebar-hook-port" 2>/dev/null || echo \(HookConstants.defaultPort)); cat | curl -s -X POST "http://localhost:${PORT}/hook" -H 'Content-Type: application/json' -d @- > /dev/null 2>&1 & }; __claudebar_hook
+    __mymeter_hook() { PORT=$(cat "$HOME/.claude/mymeter-hook-port" 2>/dev/null || echo \(HookConstants.defaultPort)); cat | curl -s -X POST "http://localhost:${PORT}/hook" -H 'Content-Type: application/json' -d @- > /dev/null 2>&1 & }; __mymeter_hook
     """
 
     /// The event names to register hooks for
@@ -44,9 +44,9 @@ public enum HookInstaller {
         for event in hookEvents {
             var matcherEntries = hooks[event] as? [[String: Any]] ?? [[String: Any]]()
 
-            // Remove any existing ClaudeBar matcher entries for this event
+            // Remove any existing MyMeter matcher entries for this event
             matcherEntries.removeAll { entry in
-                containsClaudeBarHook(in: entry)
+                containsMyMeterHook(in: entry)
             }
 
             // Add the new hook in matcher format
@@ -67,7 +67,7 @@ public enum HookInstaller {
         try writeSettings(settings)
     }
 
-    /// Uninstalls ClaudeBar hooks from the Claude settings file.
+    /// Uninstalls MyMeter hooks from the Claude settings file.
     /// Preserves hooks from other tools.
     public static func uninstall() throws {
         guard var settings = try? readOrCreateSettings() else { return }
@@ -77,7 +77,7 @@ public enum HookInstaller {
             guard var matcherEntries = hooks[event] as? [[String: Any]] else { continue }
 
             matcherEntries.removeAll { entry in
-                containsClaudeBarHook(in: entry)
+                containsMyMeterHook(in: entry)
             }
 
             if matcherEntries.isEmpty {
@@ -96,7 +96,7 @@ public enum HookInstaller {
         try writeSettings(settings)
     }
 
-    /// Detects whether ClaudeBar hooks are currently installed.
+    /// Detects whether MyMeter hooks are currently installed.
     public static func isInstalled() -> Bool {
         guard let settings = readSettings(),
               let hooks = settings["hooks"] as? [String: Any] else {
@@ -107,13 +107,13 @@ public enum HookInstaller {
         return hooks.values.contains { value in
             guard let matcherEntries = value as? [[String: Any]] else { return false }
             return matcherEntries.contains { entry in
-                containsClaudeBarHook(in: entry)
+                containsMyMeterHook(in: entry)
             }
         }
     }
 
-    /// Checks if a matcher entry contains a ClaudeBar hook command.
-    private static func containsClaudeBarHook(in matcherEntry: [String: Any]) -> Bool {
+    /// Checks if a matcher entry contains a MyMeter hook command.
+    private static func containsMyMeterHook(in matcherEntry: [String: Any]) -> Bool {
         guard let innerHooks = matcherEntry["hooks"] as? [[String: Any]] else { return false }
         return innerHooks.contains { hook in
             guard let command = hook["command"] as? String else { return false }

@@ -71,6 +71,19 @@ public struct ProviderAccountConfig: Sendable, Equatable, Codable {
         self.probeConfig = probeConfig
     }
 
+    enum CodingKeys: String, CodingKey {
+        case accountId, label, email, organization, probeConfig
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accountId = try container.decode(String.self, forKey: .accountId)
+        label = try container.decode(String.self, forKey: .label)
+        email = try container.decodeIfPresent(String.self, forKey: .email)
+        organization = try container.decodeIfPresent(String.self, forKey: .organization)
+        probeConfig = try container.decodeIfPresent([String: String].self, forKey: .probeConfig) ?? [:]
+    }
+
     /// Converts to a ProviderAccount domain model
     public func toProviderAccount(providerId: String) -> ProviderAccount {
         ProviderAccount(

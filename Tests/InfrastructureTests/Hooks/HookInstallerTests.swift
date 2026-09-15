@@ -19,7 +19,7 @@ struct HookInstallerTests {
 
     @Test
     func `hook command reads port from discovery file`() {
-        #expect(HookInstaller.hookCommand.contains("claudebar-hook-port"))
+        #expect(HookInstaller.hookCommand.contains("mymeter-hook-port"))
     }
 
     @Test

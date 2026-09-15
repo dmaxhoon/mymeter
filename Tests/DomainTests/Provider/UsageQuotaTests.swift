@@ -47,6 +47,30 @@ struct UsageQuotaTests {
     }
 
     @Test
+    func `usageCaption exposes used and limit text that is not a reset countdown`() {
+        let quota = UsageQuota(
+            percentRemaining: 14,
+            quotaType: .timeLimit("Monthly"),
+            providerId: "codex",
+            resetText: "5,187 / 6,000 credits"
+        )
+
+        #expect(quota.usageCaption == "5,187 / 6,000 credits")
+    }
+
+    @Test
+    func `usageCaption is nil when resetText is a reset countdown`() {
+        let quota = UsageQuota(
+            percentRemaining: 70,
+            quotaType: .session,
+            providerId: "codex",
+            resetText: "Resets in 2h"
+        )
+
+        #expect(quota.usageCaption == nil)
+    }
+
+    @Test
     func `quota reset timestamp shows days hours and minutes`() {
         // Given - 2 days, 5 hours, 30 minutes from now (+ 30s buffer to avoid rounding down)
         let resetDate = Date().addingTimeInterval(2.0 * 86400 + 5.0 * 3600 + 30.0 * 60 + 30)

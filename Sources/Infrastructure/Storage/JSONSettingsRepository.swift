@@ -5,7 +5,7 @@ import Domain
 /// Implements all settings protocols: AppSettingsRepository + ProviderSettingsRepository
 /// (including all sub-protocols) + HookSettingsRepository.
 ///
-/// Backed by `JSONSettingsStore` reading/writing `~/.claudebar/settings.json`.
+/// Backed by `JSONSettingsStore` reading/writing `~/.mymeter/settings.json`.
 /// Vercel credentials use the injected secure store; legacy provider credentials
 /// remain in UserDefaults pending their own migrations.
 public final class JSONSettingsRepository:
@@ -371,15 +371,15 @@ public final class JSONSettingsRepository:
     // Credentials (UserDefaults for now, Keychain migration later)
 
     public func saveGithubToken(_ token: String) {
-        credentials.set(token, forKey: "com.claudebar.credentials.github-copilot-token")
+        credentials.set(token, forKey: "com.mymeter.credentials.github-copilot-token")
     }
 
     public func getGithubToken() -> String? {
-        credentials.string(forKey: "com.claudebar.credentials.github-copilot-token")
+        credentials.string(forKey: "com.mymeter.credentials.github-copilot-token")
     }
 
     public func deleteGithubToken() {
-        credentials.removeObject(forKey: "com.claudebar.credentials.github-copilot-token")
+        credentials.removeObject(forKey: "com.mymeter.credentials.github-copilot-token")
     }
 
     public func hasGithubToken() -> Bool {
@@ -387,15 +387,15 @@ public final class JSONSettingsRepository:
     }
 
     public func saveGithubUsername(_ username: String) {
-        credentials.set(username, forKey: "com.claudebar.credentials.github-username")
+        credentials.set(username, forKey: "com.mymeter.credentials.github-username")
     }
 
     public func getGithubUsername() -> String? {
-        credentials.string(forKey: "com.claudebar.credentials.github-username")
+        credentials.string(forKey: "com.mymeter.credentials.github-username")
     }
 
     public func deleteGithubUsername() {
-        credentials.removeObject(forKey: "com.claudebar.credentials.github-username")
+        credentials.removeObject(forKey: "com.mymeter.credentials.github-username")
     }
 
     // MARK: - BedrockSettingsRepository
@@ -454,27 +454,27 @@ public final class JSONSettingsRepository:
     }
 
     public func saveAlibabaManualCookie(_ cookie: String) {
-        credentials.set(cookie, forKey: "com.claudebar.credentials.alibaba-manual-cookie")
+        credentials.set(cookie, forKey: "com.mymeter.credentials.alibaba-manual-cookie")
     }
 
     public func getAlibabaManualCookie() -> String? {
-        credentials.string(forKey: "com.claudebar.credentials.alibaba-manual-cookie")
+        credentials.string(forKey: "com.mymeter.credentials.alibaba-manual-cookie")
     }
 
     public func saveAlibabaApiKey(_ key: String) {
-        credentials.set(key, forKey: "com.claudebar.credentials.alibaba-api-key")
+        credentials.set(key, forKey: "com.mymeter.credentials.alibaba-api-key")
     }
 
     public func getAlibabaApiKey() -> String? {
-        credentials.string(forKey: "com.claudebar.credentials.alibaba-api-key")
+        credentials.string(forKey: "com.mymeter.credentials.alibaba-api-key")
     }
 
     public func deleteAlibabaApiKey() {
-        credentials.removeObject(forKey: "com.claudebar.credentials.alibaba-api-key")
+        credentials.removeObject(forKey: "com.mymeter.credentials.alibaba-api-key")
     }
 
     public func hasAlibabaApiKey() -> Bool {
-        credentials.object(forKey: "com.claudebar.credentials.alibaba-api-key") != nil
+        credentials.object(forKey: "com.mymeter.credentials.alibaba-api-key") != nil
     }
 
     // MARK: - HookSettingsRepository
@@ -521,15 +521,15 @@ public final class JSONSettingsRepository:
     // MiniMax Credentials (UserDefaults for now)
 
     public func saveMinimaxApiKey(_ key: String) {
-        credentials.set(key, forKey: "com.claudebar.credentials.minimax-api-key")
+        credentials.set(key, forKey: "com.mymeter.credentials.minimax-api-key")
     }
 
     public func getMinimaxApiKey() -> String? {
-        credentials.string(forKey: "com.claudebar.credentials.minimax-api-key")
+        credentials.string(forKey: "com.mymeter.credentials.minimax-api-key")
     }
 
     public func deleteMinimaxApiKey() {
-        credentials.removeObject(forKey: "com.claudebar.credentials.minimax-api-key")
+        credentials.removeObject(forKey: "com.mymeter.credentials.minimax-api-key")
     }
 
     public func hasMinimaxApiKey() -> Bool {
@@ -563,7 +563,69 @@ public final class JSONSettingsRepository:
         vercelCredentials.exists()
     }
 
-    private static let legacyVercelApiKeyKey = "com.claudebar.credentials.vercel-api-key"
+    private static let legacyVercelApiKeyKey = "com.mymeter.credentials.vercel-api-key"
+}
+
+// MARK: - MultiAccountSettingsRepository
+
+extension JSONSettingsRepository: MultiAccountSettingsRepository {
+    public func accounts(forProvider id: String) -> [ProviderAccountConfig] {
+        guard let cursor: [String: Any] = store.read(key: "providers.\(id)"),
+              let raw = cursor["accounts"],
+              JSONSerialization.isValidJSONObject(raw),
+              let data = try? JSONSerialization.data(withJSONObject: raw),
+              let configs = try? JSONDecoder().decode([ProviderAccountConfig].self, from: data) else {
+            return []
+        }
+        return configs
+    }
+
+    public func addAccount(_ config: ProviderAccountConfig, forProvider id: String) {
+        var configs = accounts(forProvider: id)
+        configs.removeAll { $0.accountId == config.accountId }
+        configs.append(config)
+        writeAccounts(configs, forProvider: id)
+    }
+
+    public func removeAccount(accountId: String, forProvider id: String) {
+        var configs = accounts(forProvider: id)
+        configs.removeAll { $0.accountId == accountId }
+        writeAccounts(configs, forProvider: id)
+        if activeAccountId(forProvider: id) == accountId {
+            setActiveAccountId(nil, forProvider: id)
+        }
+    }
+
+    public func updateAccount(_ config: ProviderAccountConfig, forProvider id: String) {
+        var configs = accounts(forProvider: id)
+        if let index = configs.firstIndex(where: { $0.accountId == config.accountId }) {
+            configs[index] = config
+        } else {
+            configs.append(config)
+        }
+        writeAccounts(configs, forProvider: id)
+    }
+
+    public func activeAccountId(forProvider id: String) -> String? {
+        store.read(key: "providers.\(id).activeAccountId")
+    }
+
+    public func setActiveAccountId(_ accountId: String?, forProvider id: String) {
+        let value: Any? = (accountId?.isEmpty == false) ? accountId : nil
+        store.write(value: value, key: "providers.\(id).activeAccountId")
+    }
+
+    private func writeAccounts(_ configs: [ProviderAccountConfig], forProvider id: String) {
+        if configs.isEmpty {
+            store.write(value: nil, key: "providers.\(id).accounts")
+            return
+        }
+        guard let data = try? JSONEncoder().encode(configs),
+              let json = try? JSONSerialization.jsonObject(with: data) else {
+            return
+        }
+        store.write(value: json, key: "providers.\(id).accounts")
+    }
 }
 
 // MARK: - DeepSeekSettingsRepository
@@ -580,15 +642,15 @@ extension JSONSettingsRepository: DeepSeekSettingsRepository {
     // DeepSeek Credentials (UserDefaults for now)
 
     public func saveDeepSeekApiKey(_ key: String) {
-        credentials.set(key, forKey: "com.claudebar.credentials.deepseek-api-key")
+        credentials.set(key, forKey: "com.mymeter.credentials.deepseek-api-key")
     }
 
     public func getDeepSeekApiKey() -> String? {
-        credentials.string(forKey: "com.claudebar.credentials.deepseek-api-key")
+        credentials.string(forKey: "com.mymeter.credentials.deepseek-api-key")
     }
 
     public func deleteDeepSeekApiKey() {
-        credentials.removeObject(forKey: "com.claudebar.credentials.deepseek-api-key")
+        credentials.removeObject(forKey: "com.mymeter.credentials.deepseek-api-key")
     }
 
     public func hasDeepSeekApiKey() -> Bool {

@@ -9,12 +9,12 @@ struct LogsPane: View {
     var body: some View {
         SettingsPane(
             title: "Logs",
-            subtitle: "~/Library/Logs/ClaudeBar/ClaudeBar.log · rotates at 5 MB"
+            subtitle: "~/Library/Logs/MyMeter/MyMeter.log · rotates at 5 MB"
         ) {
             SettingsCard {
                 SettingsRow(
                     title: "Application Log",
-                    subtitle: "Opens ClaudeBar.log in TextEdit. Attach it when reporting issues."
+                    subtitle: "Opens MyMeter.log in TextEdit. Attach it when reporting issues."
                 ) {
                     Button {
                         FileLogger.shared.openCurrentLogFile()

@@ -125,4 +125,81 @@ struct GrokProviderTests {
         #expect(grok.snapshot == nil)
         #expect(grok.lastError as? ProbeError == .authenticationRequired)
     }
+
+    @Test
+    func `lists stored extra accounts beside the default`() {
+        let settings = InMemoryMultiAccountSettingsRepository()
+        settings.addAccount(
+            ProviderAccountConfig(accountId: "work", label: "Work", probeConfig: ["grokHome": "/tmp/grok-work"]),
+            forProvider: "grok"
+        )
+        let grok = GrokProvider(probe: MockUsageProbe(), settingsRepository: settings)
+
+        #expect(grok.accounts.map(\.accountId) == ["default", "work"])
+    }
+
+    @Test
+    func `switchAccount then refresh uses the selected grok account`() async throws {
+        let settings = InMemoryMultiAccountSettingsRepository()
+        settings.addAccount(
+            ProviderAccountConfig(accountId: "work", label: "Work", probeConfig: ["grokHome": "/tmp/grok-work"]),
+            forProvider: "grok"
+        )
+
+        let defaultProbe = MockUsageProbe()
+        let workProbe = MockUsageProbe()
+        let defaultSnap = UsageSnapshot(
+            providerId: "grok",
+            quotas: [UsageQuota(percentRemaining: 90, quotaType: .weekly, providerId: "grok")],
+            capturedAt: Date(),
+            accountEmail: "home@example.com"
+        )
+        let workSnap = UsageSnapshot(
+            providerId: "grok",
+            quotas: [UsageQuota(percentRemaining: 20, quotaType: .weekly, providerId: "grok")],
+            capturedAt: Date(),
+            accountEmail: "work@example.com"
+        )
+        given(defaultProbe).probe().willReturn(defaultSnap)
+        given(workProbe).probe().willReturn(workSnap)
+
+        let grok = GrokProvider(
+            probe: defaultProbe,
+            settingsRepository: settings,
+            probeFactory: { config in
+                config.accountId == "work" ? workProbe : defaultProbe
+            }
+        )
+
+        _ = try await grok.refresh()
+        #expect(grok.snapshot?.accountEmail == "home@example.com")
+
+        #expect(grok.switchAccount(to: "work") == true)
+        _ = try await grok.refresh()
+        #expect(grok.snapshot?.accountEmail == "work@example.com")
+        #expect(settings.activeAccountId(forProvider: "grok") == "work")
+    }
+
+    @Test
+    func `addSessionAccount persists extra grok home`() {
+        let settings = InMemoryMultiAccountSettingsRepository()
+        let grok = GrokProvider(probe: MockUsageProbe(), settingsRepository: settings)
+
+        let accountId = grok.addSessionAccount(label: "Work", probeConfig: ["grokHome": "/tmp/grok-work"])
+
+        #expect(accountId == "work")
+        #expect(grok.accounts.map(\.label) == ["Default", "Work"])
+        #expect(settings.accounts(forProvider: "grok")[0].probeConfig["grokHome"] == "/tmp/grok-work")
+    }
+
+    @Test
+    func `accountConfig exposes stored probe config and an implicit default`() {
+        let settings = InMemoryMultiAccountSettingsRepository()
+        let grok = GrokProvider(probe: MockUsageProbe(), settingsRepository: settings)
+        grok.addSessionAccount(label: "Work", probeConfig: ["grokHome": "/tmp/grok-work"])
+
+        #expect(grok.accountConfig(for: "work")?.probeConfig["grokHome"] == "/tmp/grok-work")
+        #expect(grok.accountConfig(for: ProviderAccount.defaultAccountId)?.probeConfig.isEmpty == true)
+        #expect(grok.accountConfig(for: "missing") == nil)
+    }
 }

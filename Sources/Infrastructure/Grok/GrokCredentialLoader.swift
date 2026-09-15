@@ -51,36 +51,62 @@ public struct GrokCredentialResult: @unchecked Sendable {
 ///   }
 /// }
 /// ```
+///
+/// Paths follow the official `GROK_HOME` convention: the CLI keeps `auth.json`
+/// directly inside `$GROK_HOME`, which defaults to `~/.grok`.
 public struct GrokCredentialLoader: Sendable {
-    private let homeDirectory: String
+    /// The `GROK_HOME` folder this loader reads from (holds `auth.json`).
+    public let grokHome: String
+    private let authFilePathOverride: String?
 
     /// Refresh this long before the token actually expires, so a probe never
     /// races the expiry mid-request.
     private static let expiryMargin: TimeInterval = 5 * 60
 
-    public init(homeDirectory: String = NSHomeDirectory()) {
-        self.homeDirectory = homeDirectory
+    /// `~/.grok` — the CLI's default `GROK_HOME`.
+    public static var defaultGrokHome: String {
+        (NSHomeDirectory() as NSString).appendingPathComponent(".grok")
+    }
+
+    /// - Parameters:
+    ///   - grokHome: A `GROK_HOME` folder. `nil` uses the CLI default `~/.grok`.
+    ///   - authFilePath: Explicit `auth.json` path; when set it wins over `grokHome`.
+    public init(grokHome: String? = nil, authFilePath: String? = nil) {
+        self.grokHome = grokHome ?? Self.defaultGrokHome
+        self.authFilePathOverride = authFilePath
     }
 
     /// The path to the auth file.
     public var authFilePath: String {
-        (homeDirectory as NSString).appendingPathComponent(".grok/auth.json")
+        if let authFilePathOverride, !authFilePathOverride.isEmpty {
+            return authFilePathOverride
+        }
+        return (grokHome as NSString).appendingPathComponent("auth.json")
     }
 
-    /// Loads credentials from `~/.grok/auth.json`.
-    /// Returns nil when the file is missing or holds no usable token.
-    /// When several entries exist, prefers one that can be refreshed
-    /// (has a refresh token), then the one expiring furthest in the future.
-    public func loadCredentials() -> GrokCredentialResult? {
+    /// The `GROK_HOME` to hand the CLI so it operates on this loader's auth file,
+    /// or `nil` when the file does not sit in a CLI-compatible layout
+    /// (i.e. it is not named `auth.json`).
+    public var cliGrokHome: String? {
+        guard let authFilePathOverride, !authFilePathOverride.isEmpty else {
+            return grokHome
+        }
+        let file = authFilePathOverride as NSString
+        guard file.lastPathComponent == "auth.json" else { return nil }
+        return file.deletingLastPathComponent
+    }
+
+    /// Loads every usable credential entry from the auth file.
+    public func loadAllCredentials() -> [GrokCredentialResult] {
         let path = authFilePath
         guard FileManager.default.fileExists(atPath: path) else {
-            return nil
+            return []
         }
 
         do {
             let data = try Data(contentsOf: URL(fileURLWithPath: path))
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return nil
+                return []
             }
 
             var candidates: [GrokCredentialResult] = []
@@ -102,20 +128,35 @@ public struct GrokCredentialLoader: Sendable {
                     fullData: json
                 ))
             }
-
-            return candidates.max { lhs, rhs in
-                let lhsRefreshable = lhs.refreshToken != nil
-                let rhsRefreshable = rhs.refreshToken != nil
-                if lhsRefreshable != rhsRefreshable {
-                    return rhsRefreshable
-                }
-                let lhsExpiry = Self.parseDate(lhs.expiresAt) ?? .distantFuture
-                let rhsExpiry = Self.parseDate(rhs.expiresAt) ?? .distantFuture
-                return lhsExpiry < rhsExpiry
-            }
+            return candidates
         } catch {
             AppLog.credentials.error("Failed to load Grok credentials from file: \(error.localizedDescription)")
-            return nil
+            return []
+        }
+    }
+
+    /// Loads credentials from `~/.grok/auth.json`.
+    /// Returns nil when the file is missing or holds no usable token.
+    /// When `entryKey` is set, that entry is preferred if present.
+    /// Otherwise prefers a refreshable entry, then the one expiring furthest ahead.
+    public func loadCredentials(entryKey: String? = nil) -> GrokCredentialResult? {
+        let candidates = loadAllCredentials()
+        if let entryKey, let match = candidates.first(where: { $0.entryKey == entryKey }) {
+            return match
+        }
+        return preferredCredential(from: candidates)
+    }
+
+    private func preferredCredential(from candidates: [GrokCredentialResult]) -> GrokCredentialResult? {
+        candidates.max { lhs, rhs in
+            let lhsRefreshable = lhs.refreshToken != nil
+            let rhsRefreshable = rhs.refreshToken != nil
+            if lhsRefreshable != rhsRefreshable {
+                return rhsRefreshable
+            }
+            let lhsExpiry = Self.parseDate(lhs.expiresAt) ?? .distantFuture
+            let rhsExpiry = Self.parseDate(rhs.expiresAt) ?? .distantFuture
+            return lhsExpiry < rhsExpiry
         }
     }
 

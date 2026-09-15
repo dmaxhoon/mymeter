@@ -78,14 +78,20 @@ public struct CursorUsageProbe: UsageProbe {
 
         AppLog.probes.info("Cursor: Reading auth token from database...")
 
-        let accessToken = try await readAccessToken(from: dbPath)
+        let accessToken = try await readDatabaseValue(from: dbPath, key: "cursorAuth/accessToken")
+        guard let accessToken, !accessToken.isEmpty else {
+            AppLog.probes.error("Cursor: No access token found in database (not logged in?)")
+            throw ProbeError.authenticationRequired
+        }
+
+        let cachedEmail = try await readDatabaseValue(from: dbPath, key: "cursorAuth/cachedEmail")
         let userId = try Self.extractUserIdFromJWT(accessToken)
         let cookie = "WorkosCursorSessionToken=\(userId)::\(accessToken)"
 
         AppLog.probes.info("Cursor: Fetching usage summary...")
 
         let response = try await fetchUsageSummary(cookie: cookie)
-        let snapshot = try Self.parseUsageSummary(response)
+        let snapshot = try Self.parseUsageSummary(response, accountEmail: cachedEmail)
 
         AppLog.probes.info("Cursor: Probe success - \(snapshot.quotas.count) quotas found")
         return snapshot
@@ -93,13 +99,13 @@ public struct CursorUsageProbe: UsageProbe {
 
     // MARK: - Token Extraction
 
-    /// Reads the access token from Cursor's SQLite database using the sqlite3 CLI.
-    private func readAccessToken(from dbPath: String) async throws -> String {
+    /// Reads a value from Cursor's SQLite `ItemTable` using the sqlite3 CLI.
+    private func readDatabaseValue(from dbPath: String, key: String) async throws -> String? {
         let result: SubprocessSupport.Output
         do {
             result = try await SubprocessSupport.run(
                 executablePath: "/usr/bin/sqlite3",
-                arguments: [dbPath, "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'"],
+                arguments: [dbPath, "SELECT value FROM ItemTable WHERE key = '\(key)'"],
                 outputLimit: 64 * 1024
             )
         } catch {
@@ -112,14 +118,8 @@ public struct CursorUsageProbe: UsageProbe {
             throw ProbeError.executionFailed("sqlite3 exited with status \(result.exitCode)")
         }
 
-        let token = result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !token.isEmpty else {
-            AppLog.probes.error("Cursor: No access token found in database (not logged in?)")
-            throw ProbeError.authenticationRequired
-        }
-
-        return token
+        let value = result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 
     /// Extracts the user ID (`sub` claim) from a JWT token by base64-decoding the payload.
@@ -193,7 +193,7 @@ public struct CursorUsageProbe: UsageProbe {
     /// Parses the Cursor usage-summary API response into a UsageSnapshot.
     ///
     /// The API returns usage nested under `individualUsage.plan` and `individualUsage.onDemand`.
-    public static func parseUsageSummary(_ data: Data) throws -> UsageSnapshot {
+    public static func parseUsageSummary(_ data: Data, accountEmail: String? = nil) throws -> UsageSnapshot {
         let json: [String: Any]
         do {
             guard let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -334,6 +334,7 @@ public struct CursorUsageProbe: UsageProbe {
             providerId: "cursor",
             quotas: quotas,
             capturedAt: Date(),
+            accountEmail: accountEmail,
             accountTier: tier
         )
     }

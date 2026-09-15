@@ -35,14 +35,14 @@ struct ActionBarSpec {
         }
 
         @Test
-        func `Codex dashboard URL is OpenAI usage`() {
+        func `Codex dashboard URL is ChatGPT Codex usage`() {
             let codex = CodexProvider(probe: MockUsageProbe(), settingsRepository: Self.makeSettings())
-            #expect(codex.dashboardURL?.absoluteString == "https://platform.openai.com/usage")
+            #expect(codex.dashboardURL?.absoluteString == "https://chatgpt.com/codex/settings/usage")
         }
 
         @Test
         func `Copilot dashboard URL is GitHub features page`() {
-            let suiteName = "com.claudebar.test.\(UUID().uuidString)"
+            let suiteName = "com.mymeter.test.\(UUID().uuidString)"
             let defaults = UserDefaults(suiteName: suiteName)!
             let settings = UserDefaultsProviderSettingsRepository(userDefaults: defaults)
             let copilot = CopilotProvider(probe: MockUsageProbe(), settingsRepository: settings)
@@ -57,7 +57,7 @@ struct ActionBarSpec {
 
         @Test
         func `Bedrock dashboard URL is AWS console`() {
-            let suiteName = "com.claudebar.test.\(UUID().uuidString)"
+            let suiteName = "com.mymeter.test.\(UUID().uuidString)"
             let defaults = UserDefaults(suiteName: suiteName)!
             let settings = UserDefaultsProviderSettingsRepository(userDefaults: defaults)
             let bedrock = BedrockProvider(probe: MockUsageProbe(), settingsRepository: settings)
@@ -66,7 +66,7 @@ struct ActionBarSpec {
 
         @Test
         func `Zai dashboard URL is Z.ai subscribe`() {
-            let suiteName = "com.claudebar.test.\(UUID().uuidString)"
+            let suiteName = "com.mymeter.test.\(UUID().uuidString)"
             let defaults = UserDefaults(suiteName: suiteName)!
             let settings = UserDefaultsProviderSettingsRepository(userDefaults: defaults)
             let zai = ZaiProvider(probe: MockUsageProbe(), settingsRepository: settings)

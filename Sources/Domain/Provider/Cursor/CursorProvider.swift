@@ -5,7 +5,9 @@ import Observation
 /// Observable class with its own state (isSyncing, snapshot, error).
 @MainActor
 @Observable
-public final class CursorProvider: AIProvider {
+public final class CursorProvider: AIProvider, MultiAccountProvider {
+    public typealias AccountProbeFactory = @Sendable (ProviderAccountConfig) -> any UsageProbe
+
     // MARK: - Identity (Protocol Requirement)
 
     public let id: String = "cursor"
@@ -29,56 +31,175 @@ public final class CursorProvider: AIProvider {
 
     // MARK: - State (Observable)
 
-    /// Whether the provider is currently syncing data
     public private(set) var isSyncing: Bool = false
-
-    /// The current usage snapshot (nil if never refreshed or unavailable)
     public private(set) var snapshot: UsageSnapshot?
-
-    /// The last error that occurred during refresh
     public private(set) var lastError: Error?
+
+    public private(set) var accounts: [ProviderAccount]
+    public private(set) var activeAccount: ProviderAccount
+    public private(set) var accountSnapshots: [String: UsageSnapshot] = [:]
 
     // MARK: - Internal
 
-    /// The probe for fetching usage data via Cursor's API
     private let probe: any UsageProbe
-
-    /// The settings repository for persisting provider settings
+    private let probeFactory: AccountProbeFactory?
     private let settingsRepository: any ProviderSettingsRepository
+    private var multiAccountSettings: (any MultiAccountSettingsRepository)? {
+        settingsRepository as? MultiAccountSettingsRepository
+    }
 
     // MARK: - Initialization
 
-    /// Creates a Cursor provider
-    /// - Parameters:
-    ///   - probe: The probe to use for fetching usage data
-    ///   - settingsRepository: The repository for persisting settings
-    public init(probe: any UsageProbe, settingsRepository: any ProviderSettingsRepository) {
+    public init(
+        probe: any UsageProbe,
+        settingsRepository: any ProviderSettingsRepository,
+        probeFactory: AccountProbeFactory? = nil
+    ) {
         self.probe = probe
+        self.probeFactory = probeFactory
         self.settingsRepository = settingsRepository
         self.isEnabled = settingsRepository.isEnabled(forProvider: "cursor")
+        let loaded = Self.loadAccounts(from: settingsRepository)
+        self.accounts = loaded.accounts
+        self.activeAccount = loaded.active
     }
 
     // MARK: - AIProvider Protocol
 
     public func isAvailable() async -> Bool {
-        await probe.isAvailable()
+        for config in accountConfigs {
+            if await probeFor(config).isAvailable() {
+                return true
+            }
+        }
+        return false
     }
 
-    /// Refreshes the usage data and updates the snapshot.
-    /// Sets isSyncing during refresh and captures any errors.
     @discardableResult
     public func refresh() async throws -> UsageSnapshot {
         isSyncing = true
         defer { isSyncing = false }
 
         do {
-            let newSnapshot = try await probe.probe()
-            snapshot = newSnapshot
+            let snapshot = try await refreshAccount(activeAccount.accountId)
             lastError = nil
-            return newSnapshot
+            return snapshot
         } catch {
             lastError = error
             throw error
         }
+    }
+
+    // MARK: - MultiAccountProvider
+
+    @discardableResult
+    public func switchAccount(to accountId: String) -> Bool {
+        guard let account = accounts.first(where: { $0.accountId == accountId }) else {
+            return false
+        }
+        multiAccountSettings?.setActiveAccountId(accountId, forProvider: id)
+        activeAccount = account
+        snapshot = accountSnapshots[accountId]
+        lastError = nil
+        return true
+    }
+
+    @discardableResult
+    public func refreshAccount(_ accountId: String) async throws -> UsageSnapshot {
+        guard let config = accountConfigs.first(where: { $0.accountId == accountId }) else {
+            throw ProbeError.executionFailed("Unknown Cursor account: \(accountId)")
+        }
+        let newSnapshot = try await probeFor(config).probe()
+        applySnapshot(newSnapshot, to: accountId)
+        return newSnapshot
+    }
+
+    public func refreshAllAccounts() async {
+        isSyncing = true
+        defer { isSyncing = false }
+        for config in accountConfigs {
+            do {
+                let snapshot = try await probeFor(config).probe()
+                applySnapshot(snapshot, to: config.accountId)
+            } catch {
+                if config.accountId == activeAccount.accountId {
+                    lastError = error
+                }
+            }
+        }
+    }
+
+    // MARK: - Account management
+
+    public func addSessionAccount(label: String, probeConfig: [String: String]) {
+        guard let multiAccountSettings else { return }
+        let existingIds = accountConfigs.map(\.accountId)
+        let accountId = SessionAccounts.uniqueAccountId(from: label, existing: existingIds)
+        let config = ProviderAccountConfig(
+            accountId: accountId,
+            label: label,
+            probeConfig: probeConfig
+        )
+        multiAccountSettings.addAccount(config, forProvider: id)
+        reloadAccounts()
+    }
+
+    @discardableResult
+    public func removeSessionAccount(accountId: String) -> Bool {
+        guard accountId != ProviderAccount.defaultAccountId else { return false }
+        guard accounts.contains(where: { $0.accountId == accountId }) else { return false }
+        multiAccountSettings?.removeAccount(accountId: accountId, forProvider: id)
+        accountSnapshots.removeValue(forKey: accountId)
+        reloadAccounts()
+        snapshot = accountSnapshots[activeAccount.accountId]
+        return true
+    }
+
+    // MARK: - Private
+
+    private var accountConfigs: [ProviderAccountConfig] {
+        SessionAccounts.resolved(stored: multiAccountSettings?.accounts(forProvider: id) ?? [])
+    }
+
+    private func probeFor(_ config: ProviderAccountConfig) -> any UsageProbe {
+        probeFactory?(config) ?? probe
+    }
+
+    private func reloadAccounts() {
+        let loaded = Self.loadAccounts(from: settingsRepository)
+        accounts = loaded.accounts
+        activeAccount = loaded.active
+    }
+
+    private func applySnapshot(_ snapshot: UsageSnapshot, to accountId: String) {
+        accountSnapshots[accountId] = snapshot
+        if let index = accounts.firstIndex(where: { $0.accountId == accountId }) {
+            let current = accounts[index]
+            accounts[index] = ProviderAccount(
+                accountId: current.accountId,
+                providerId: current.providerId,
+                label: current.label,
+                email: snapshot.accountEmail ?? current.email,
+                organization: snapshot.accountOrganization ?? current.organization
+            )
+            if activeAccount.accountId == accountId {
+                activeAccount = accounts[index]
+            }
+        }
+        if activeAccount.accountId == accountId {
+            self.snapshot = snapshot
+        }
+    }
+
+    private static func loadAccounts(
+        from settingsRepository: any ProviderSettingsRepository
+    ) -> (accounts: [ProviderAccount], active: ProviderAccount) {
+        let stored = (settingsRepository as? MultiAccountSettingsRepository)?.accounts(forProvider: "cursor") ?? []
+        let configs = SessionAccounts.resolved(stored: stored)
+        let accounts = configs.map { $0.toProviderAccount(providerId: "cursor") }
+        let wanted = (settingsRepository as? MultiAccountSettingsRepository)?.activeAccountId(forProvider: "cursor")
+            ?? ProviderAccount.defaultAccountId
+        let active = accounts.first(where: { $0.accountId == wanted }) ?? accounts[0]
+        return (accounts, active)
     }
 }

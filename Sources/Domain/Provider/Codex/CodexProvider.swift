@@ -14,7 +14,7 @@ public final class CodexProvider: AIProvider {
     public let cliCommand: String = "codex"
 
     public var dashboardURL: URL? {
-        URL(string: "https://platform.openai.com/usage")
+        URL(string: "https://chatgpt.com/codex/settings/usage")
     }
 
     public var statusPageURL: URL? {

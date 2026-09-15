@@ -15,11 +15,11 @@ struct GrokCredentialLoaderTests {
         return tempDir
     }
 
+    /// Writes `auth.json` directly inside `directory`, mirroring the official
+    /// layout where `GROK_HOME` (default `~/.grok`) holds `auth.json`.
     private func writeAuthFile(at directory: URL, json: [String: Any]) throws {
-        let grokDir = directory.appendingPathComponent(".grok", isDirectory: true)
-        try FileManager.default.createDirectory(at: grokDir, withIntermediateDirectories: true)
         let data = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted])
-        try data.write(to: grokDir.appendingPathComponent("auth.json"))
+        try data.write(to: directory.appendingPathComponent("auth.json"))
     }
 
     private func oidcEntry(
@@ -40,6 +40,48 @@ struct GrokCredentialLoaderTests {
         return entry
     }
 
+    // MARK: - Path Tests
+
+    @Test
+    func `default auth file lives at dot grok slash auth json`() {
+        let loader = GrokCredentialLoader()
+
+        #expect(loader.authFilePath == NSHomeDirectory() + "/.grok/auth.json")
+    }
+
+    @Test
+    func `auth file lives directly inside a custom GROK_HOME`() {
+        let loader = GrokCredentialLoader(grokHome: "/tmp/grok-work")
+
+        #expect(loader.authFilePath == "/tmp/grok-work/auth.json")
+    }
+
+    @Test
+    func `explicit auth file path wins over GROK_HOME`() {
+        let loader = GrokCredentialLoader(grokHome: "/tmp/grok-work", authFilePath: "/tmp/other/auth.json")
+
+        #expect(loader.authFilePath == "/tmp/other/auth.json")
+    }
+
+    @Test
+    func `cliGrokHome is the GROK_HOME folder by default`() {
+        #expect(GrokCredentialLoader(grokHome: "/tmp/grok-work").cliGrokHome == "/tmp/grok-work")
+    }
+
+    @Test
+    func `cliGrokHome derives from an explicit auth json path`() {
+        let loader = GrokCredentialLoader(grokHome: "/tmp/grok-work", authFilePath: "/tmp/other/auth.json")
+
+        #expect(loader.cliGrokHome == "/tmp/other")
+    }
+
+    @Test
+    func `cliGrokHome is nil for a non standard auth file name`() {
+        let loader = GrokCredentialLoader(authFilePath: "/tmp/other/custom-auth.json")
+
+        #expect(loader.cliGrokHome == nil)
+    }
+
     // MARK: - Loading Tests
 
     @Test
@@ -51,7 +93,7 @@ struct GrokCredentialLoaderTests {
             "https://auth.x.ai::client-123": oidcEntry()
         ])
 
-        let loader = GrokCredentialLoader(homeDirectory: tempDir.path)
+        let loader = GrokCredentialLoader(grokHome: tempDir.path)
         let credentials = loader.loadCredentials()
 
         #expect(credentials != nil)
@@ -68,7 +110,7 @@ struct GrokCredentialLoaderTests {
         let tempDir = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        let loader = GrokCredentialLoader(homeDirectory: tempDir.path)
+        let loader = GrokCredentialLoader(grokHome: tempDir.path)
 
         #expect(loader.loadCredentials() == nil)
     }
@@ -82,7 +124,7 @@ struct GrokCredentialLoaderTests {
             "https://auth.x.ai::client-123": ["key": "", "auth_mode": "oidc"]
         ])
 
-        let loader = GrokCredentialLoader(homeDirectory: tempDir.path)
+        let loader = GrokCredentialLoader(grokHome: tempDir.path)
 
         #expect(loader.loadCredentials() == nil)
     }
@@ -97,7 +139,7 @@ struct GrokCredentialLoaderTests {
             "https://auth.x.ai::client-123": oidcEntry(key: "oidc-token")
         ])
 
-        let loader = GrokCredentialLoader(homeDirectory: tempDir.path)
+        let loader = GrokCredentialLoader(grokHome: tempDir.path)
         let credentials = loader.loadCredentials()
 
         #expect(credentials?.accessToken == "oidc-token")
@@ -114,7 +156,7 @@ struct GrokCredentialLoaderTests {
             "https://auth.x.ai::client-123": entry
         ])
 
-        let loader = GrokCredentialLoader(homeDirectory: tempDir.path)
+        let loader = GrokCredentialLoader(grokHome: tempDir.path)
         let credentials = try #require(loader.loadCredentials())
 
         #expect(credentials.refreshToken == nil)
@@ -183,7 +225,7 @@ struct GrokCredentialLoaderTests {
             "https://auth.x.ai::client-123": oidcEntry()
         ])
 
-        let loader = GrokCredentialLoader(homeDirectory: tempDir.path)
+        let loader = GrokCredentialLoader(grokHome: tempDir.path)
         var credentials = try #require(loader.loadCredentials())
 
         credentials.accessToken = "new-token"
@@ -198,5 +240,58 @@ struct GrokCredentialLoaderTests {
         // Fields the refresh doesn't touch stay intact
         #expect(reloaded.email == "user@example.com")
         #expect(reloaded.oidcIssuer == "https://auth.x.ai")
+    }
+
+    @Test
+    func `loadAllCredentials returns every usable entry`() throws {
+        let tempDir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        try writeAuthFile(at: tempDir, json: [
+            "https://accounts.x.ai/sign-in": ["key": "legacy-api-key"],
+            "https://auth.x.ai::client-123": oidcEntry(key: "oidc-token", email: "oidc@example.com")
+        ])
+
+        let loader = GrokCredentialLoader(grokHome: tempDir.path)
+        let all = loader.loadAllCredentials()
+
+        #expect(all.count == 2)
+        #expect(all.map(\.email).contains("oidc@example.com"))
+    }
+
+    @Test
+    func `loadCredentials prefers requested entry key`() throws {
+        let tempDir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        try writeAuthFile(at: tempDir, json: [
+            "https://accounts.x.ai/sign-in": ["key": "legacy-api-key", "email": "legacy@example.com"],
+            "https://auth.x.ai::client-123": oidcEntry(key: "oidc-token", email: "oidc@example.com")
+        ])
+
+        let loader = GrokCredentialLoader(grokHome: tempDir.path)
+        let selected = loader.loadCredentials(entryKey: "https://accounts.x.ai/sign-in")
+
+        #expect(selected?.accessToken == "legacy-api-key")
+        #expect(selected?.email == "legacy@example.com")
+    }
+
+    @Test
+    func `loadCredentials from an explicit auth file path`() throws {
+        let tempDir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let authURL = tempDir.appendingPathComponent("custom-auth.json")
+        let json: [String: Any] = [
+            "https://auth.x.ai::client-123": oidcEntry(email: "custom@example.com")
+        ]
+        try JSONSerialization.data(withJSONObject: json).write(to: authURL)
+
+        let loader = GrokCredentialLoader(
+            grokHome: "/does-not-exist",
+            authFilePath: authURL.path
+        )
+
+        #expect(loader.loadCredentials()?.email == "custom@example.com")
     }
 }

@@ -164,6 +164,97 @@ struct DefaultCodexRPCClientTests {
         }
     }
 
+    @Test
+    func `fetchRateLimits parses individualLimit remainingPercent`() async throws {
+        let mockTransport = MockRPCTransport()
+        let mockExecutor = MockCLIExecutor()
+        setupMockTransport(mockTransport, rateLimitsResponse: """
+        {"id":2,"result":{"rateLimits":{"planType":"enterprise","primary":{"usedPercent":30},"secondary":{"usedPercent":50},"individualLimit":{"limit":"25000","used":"8000","remainingPercent":68,"resetsAt":1778137680}}}}
+        """)
+
+        let client = DefaultCodexRPCClient(transport: mockTransport, cliExecutor: mockExecutor)
+        let result = try await client.fetchRateLimits()
+
+        #expect(result.planType == "enterprise")
+        #expect(result.primary?.usedPercent == 30)
+        #expect(result.secondary?.usedPercent == 50)
+        #expect(result.individualLimit?.remainingPercent == 68)
+        #expect(result.individualLimit?.used == 8_000)
+        #expect(result.individualLimit?.limit == 25_000)
+        #expect(result.individualLimit?.resetsAt == Date(timeIntervalSince1970: 1_778_137_680))
+    }
+
+    @Test
+    func `fetchRateLimits parses fractional individualLimit used and limit`() async throws {
+        let mockTransport = MockRPCTransport()
+        let mockExecutor = MockCLIExecutor()
+        setupMockTransport(mockTransport, rateLimitsResponse: """
+        {"id":2,"result":{"rateLimits":{"planType":"business","individualLimit":{"limit":"6000","used":"5186.841861009598","remainingPercent":14,"resetsAt":1788220800}}}}
+        """)
+        given(mockExecutor).execute(binary: .any, args: .any, input: .any, timeout: .any, workingDirectory: .any, autoResponses: .any).willThrow(ProbeError.executionFailed("TTY not available"))
+
+        let client = DefaultCodexRPCClient(transport: mockTransport, cliExecutor: mockExecutor)
+        let result = try await client.fetchRateLimits()
+
+        #expect(result.individualLimit?.remainingPercent == 14)
+        #expect(result.individualLimit?.used == 5_186.841861009598)
+        #expect(result.individualLimit?.limit == 6_000)
+    }
+
+    @Test
+    func `fetchRateLimits succeeds with only individualLimit`() async throws {
+        let mockTransport = MockRPCTransport()
+        let mockExecutor = MockCLIExecutor()
+        setupMockTransport(mockTransport, rateLimitsResponse: """
+        {"id":2,"result":{"rateLimits":{"planType":"enterprise","individualLimit":{"limit":"25000","used":"8000","remainingPercent":68,"resetsAt":1778137680}}}}
+        """)
+        given(mockExecutor).execute(binary: .any, args: .any, input: .any, timeout: .any, workingDirectory: .any, autoResponses: .any).willThrow(ProbeError.executionFailed("TTY not available"))
+
+        let client = DefaultCodexRPCClient(transport: mockTransport, cliExecutor: mockExecutor)
+        let result = try await client.fetchRateLimits()
+
+        #expect(result.individualLimit?.remainingPercent == 68)
+        #expect(result.primary == nil)
+        #expect(result.secondary == nil)
+    }
+
+    @Test
+    func `fetchRateLimits computes remainingPercent from used and limit when missing`() async throws {
+        let mockTransport = MockRPCTransport()
+        let mockExecutor = MockCLIExecutor()
+        setupMockTransport(mockTransport, rateLimitsResponse: """
+        {"id":2,"result":{"rateLimits":{"planType":"enterprise","individualLimit":{"limit":"25000","used":"8000","resetsAt":1778137680}}}}
+        """)
+        given(mockExecutor).execute(binary: .any, args: .any, input: .any, timeout: .any, workingDirectory: .any, autoResponses: .any).willThrow(ProbeError.executionFailed("TTY not available"))
+
+        let client = DefaultCodexRPCClient(transport: mockTransport, cliExecutor: mockExecutor)
+        let result = try await client.fetchRateLimits()
+
+        #expect(result.individualLimit?.remainingPercent == 68)
+    }
+
+    @Test
+    func `TTY fallback parses monthly credit limit`() async throws {
+        let mockTransport = MockRPCTransport()
+        let mockExecutor = MockCLIExecutor()
+        given(mockTransport).send(.any).willReturn(())
+        given(mockTransport).receive().willThrow(ProbeError.executionFailed("RPC failed"))
+        given(mockTransport).close().willReturn(())
+
+        given(mockExecutor).execute(binary: .any, args: .any, input: .any, timeout: .any, workingDirectory: .any, autoResponses: .any)
+            .willReturn(CLIResult(output: """
+            Monthly Credit Limit
+            ████████████████░░░░ 68% remaining
+            8,000 of 25,000 credits used
+            """, exitCode: 0))
+
+        let client = DefaultCodexRPCClient(executable: "codex", cliExecutor: mockExecutor)
+        client.transportFactory = { _, _ in mockTransport }
+
+        let result = try await client.fetchRateLimits()
+        #expect(result.individualLimit?.remainingPercent == 68)
+    }
+
     // MARK: - parseWindow Tests
 
     @Test
@@ -362,6 +453,30 @@ struct DefaultCodexRPCClientTests {
         #expect(!ttyArgs.contains("untrusted"))
     }
 
+    @Test
+    func `fetchRateLimits falls back to TTY when RPC receive hangs past timeout`() async throws {
+        let hangingTransport = HangingRPCTransport()
+        let mockExecutor = MockCLIExecutor()
+        given(mockExecutor).execute(binary: .any, args: .any, input: .any, timeout: .any, workingDirectory: .any, autoResponses: .any)
+            .willReturn(CLIResult(output: """
+            Monthly Credit Limit
+            ████████████████░░░░ 68% remaining
+            8,000 of 25,000 credits used
+            """, exitCode: 0))
+
+        let client = DefaultCodexRPCClient(executable: "codex", cliExecutor: mockExecutor)
+        client.rpcTimeout = 0.3
+        client.transportFactory = { _, _ in hangingTransport }
+
+        let started = ContinuousClock.now
+        let result = try await client.fetchRateLimits()
+        let elapsed = ContinuousClock.now - started
+
+        #expect(result.individualLimit?.remainingPercent == 68)
+        #expect(elapsed < .seconds(2))
+        #expect(hangingTransport.closeCount >= 1)
+    }
+
     /// Value passed to `-a` / `--ask-for-approval`, if any.
     private func approvalPolicy(in args: [String]) -> String? {
         guard let flagIndex = args.firstIndex(where: { $0 == "-a" || $0 == "--ask-for-approval" }),
@@ -369,5 +484,39 @@ struct DefaultCodexRPCClientTests {
             return nil
         }
         return args[flagIndex + 1]
+    }
+}
+
+/// Stands in for `codex app-server` when it accepts the connection but never
+/// writes a JSON-RPC reply. `close()` must resume `receive()` or the probe
+/// stays stuck on yesterday's snapshot.
+private final class HangingRPCTransport: RPCTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Data, Error>?
+    private var closed = false
+    private(set) var closeCount = 0
+
+    func send(_ data: Data) throws {}
+
+    func receive() async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            defer { lock.unlock() }
+            if closed {
+                continuation.resume(throwing: ProbeError.executionFailed("transport closed"))
+                return
+            }
+            self.continuation = continuation
+        }
+    }
+
+    func close() {
+        lock.lock()
+        closeCount += 1
+        closed = true
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(throwing: ProbeError.executionFailed("transport closed"))
     }
 }

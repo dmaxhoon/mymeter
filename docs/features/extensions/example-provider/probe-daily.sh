@@ -1,9 +1,9 @@
 #!/bin/sh
 # Example daily usage probe — uses config values from Settings
-# $CLAUDEBAR_API_KEY and $CLAUDEBAR_BASE_URL are injected automatically
+# $MYMETER_API_KEY and $MYMETER_BASE_URL are injected automatically
 #
 # Replace with real data:
-#   curl -s -H "Authorization: Bearer $CLAUDEBAR_API_KEY" "$CLAUDEBAR_BASE_URL/daily"
+#   curl -s -H "Authorization: Bearer $MYMETER_API_KEY" "$MYMETER_BASE_URL/daily"
 
 TODAY=$(date +%Y-%m-%d)
 YESTERDAY=$(date -v-1d +%Y-%m-%d)

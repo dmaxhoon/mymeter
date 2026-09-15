@@ -3,9 +3,9 @@ import Domain
 import Infrastructure
 import ServiceManagement
 
-/// Observable settings manager for ClaudeBar preferences.
+/// Observable settings manager for MyMeter preferences.
 /// Thin `@Observable` wrapper around `AppSettingsRepository` for SwiftUI reactivity.
-/// All persistence is delegated to the repository (`~/.claudebar/settings.json`).
+/// All persistence is delegated to the repository (`~/.mymeter/settings.json`).
 @MainActor
 @Observable
 public final class AppSettings {
@@ -298,6 +298,7 @@ public final class AppSettings {
     public var alibaba: AlibabaSettingsRepository { repository }
     public var vercel: VercelSettingsRepository { repository }
     public var hook: HookSettingsRepository { repository }
+    public var accounts: MultiAccountSettingsRepository { repository }
 
     /// Extension config repository for dynamic extension provider settings.
     public let extensionConfig: any ExtensionConfigRepository = JSONExtensionConfigRepository(

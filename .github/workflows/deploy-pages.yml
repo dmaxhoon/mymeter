@@ -41,7 +41,7 @@ jobs:
 
       - name: Preserve the live appcast
         run: |
-          LIVE="https://tddworks.github.io/ClaudeBar/appcast.xml"
+          LIVE="https://dmaxhoon.github.io/MyMeter/appcast.xml"
 
           if ! curl -fsSL --retry 3 --retry-delay 2 "$LIVE" -o /tmp/appcast.xml; then
             echo "::error::Could not fetch the live appcast from $LIVE."

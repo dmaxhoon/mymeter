@@ -551,4 +551,22 @@ struct CursorUsageProbeParsingTests {
         let snapshot = try CursorUsageProbe.parseUsageSummary(json)
         #expect(snapshot.accountTier == .custom("ULTRA"))
     }
+
+    @Test
+    func `parseUsageSummary includes account email when provided`() throws {
+        let json = """
+        {
+            "membershipType": "pro",
+            "isUnlimited": false,
+            "individualUsage": {
+                "plan": { "enabled": true, "used": 1, "limit": 500, "remaining": 499 },
+                "onDemand": { "enabled": false, "used": 0, "limit": null, "remaining": null }
+            }
+        }
+        """.data(using: .utf8)!
+
+        let snapshot = try CursorUsageProbe.parseUsageSummary(json, accountEmail: "user@example.com")
+
+        #expect(snapshot.accountEmail == "user@example.com")
+    }
 }

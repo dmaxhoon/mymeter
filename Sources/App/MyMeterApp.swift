@@ -7,11 +7,11 @@ import Sparkle
 #endif
 
 extension Notification.Name {
-    static let hookSettingsChanged = Notification.Name("com.tddworks.claudebar.hookSettingsChanged")
+    static let hookSettingsChanged = Notification.Name("com.dmaxhoon.mymeter.hookSettingsChanged")
 }
 
 @main
-struct ClaudeBarApp: App {
+struct MyMeterApp: App {
     /// The main domain service - monitors all AI providers
     /// This is the single source of truth for providers and their state
     @State private var monitor: QuotaMonitor
@@ -48,9 +48,9 @@ struct ClaudeBarApp: App {
     init() {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-        AppLog.ui.info("ClaudeBar v\(version) (\(build)) initializing...")
+        AppLog.ui.info("MyMeter v\(version) (\(build)) initializing...")
 
-        // Create the shared settings repository (JSON-backed: ~/.claudebar/settings.json)
+        // Create the shared settings repository (JSON-backed: ~/.mymeter/settings.json)
         // JSONSettingsRepository implements all sub-protocols:
         // - AppSettingsRepository (app-level display/sync settings)
         // - ProviderSettingsRepository + all provider sub-protocols
@@ -95,7 +95,13 @@ struct ClaudeBarApp: App {
                 settingsRepository: settingsRepository
             ),
             KiroProvider(probe: KiroUsageProbe(), settingsRepository: settingsRepository),
-            CursorProvider(probe: CursorUsageProbe(), settingsRepository: settingsRepository),
+            CursorProvider(
+                probe: CursorUsageProbe(),
+                settingsRepository: settingsRepository,
+                probeFactory: { config in
+                    CursorUsageProbe(dbPathOverride: CursorSessionPath.databasePath(for: config))
+                }
+            ),
             MiniMaxProvider(
                 probe: MiniMaxUsageProbe(settingsRepository: settingsRepository),
                 settingsRepository: settingsRepository
@@ -125,8 +131,18 @@ struct ClaudeBarApp: App {
                 settingsRepository: settingsRepository
             ),
             GrokProvider(
-                probe: GrokUsageProbe(),
-                settingsRepository: settingsRepository
+                probe: GrokUsageProbe(cliRefresher: GrokCLITokenRefresher()),
+                settingsRepository: settingsRepository,
+                probeFactory: { config in
+                    GrokUsageProbe(
+                        credentialLoader: GrokCredentialLoader(
+                            grokHome: GrokSessionPath.grokHome(for: config),
+                            authFilePath: GrokSessionPath.authFilePath(for: config)
+                        ),
+                        preferredEntryKey: GrokSessionPath.entryKey(for: config),
+                        cliRefresher: GrokCLITokenRefresher()
+                    )
+                }
             ),
         ])
         AppLog.providers.info("Created \(repository.all.count) providers")
@@ -154,7 +170,7 @@ struct ClaudeBarApp: App {
         statusItemDriver.startMonitoringLifecycle()
         statusItemDriver.startAttachLifecycle()
 
-        // Load user extensions from ~/.claudebar/extensions/
+        // Load user extensions from ~/.mymeter/extensions/
         let extensionRegistry = ExtensionRegistry(
             settingsRepository: settingsRepository,
             configRepository: AppSettings.shared.extensionConfig
@@ -169,7 +185,7 @@ struct ClaudeBarApp: App {
             // Reconcile installed hooks so newly-added events (e.g.
             // UserPromptSubmit, which revives a stopped session) register for
             // existing users without re-toggling the setting. install() is
-            // idempotent — it replaces only ClaudeBar's own matcher entries
+            // idempotent — it replaces only MyMeter's own matcher entries
             // per event and preserves hooks from other tools.
             if HookInstaller.isInstalled() {
                 try? HookInstaller.install()
@@ -180,7 +196,7 @@ struct ClaudeBarApp: App {
         // Note: Notification permission is requested in onAppear, not here
         // Menu bar apps need the run loop to be active before requesting permissions
 
-        AppLog.ui.info("ClaudeBar initialization complete")
+        AppLog.ui.info("MyMeter initialization complete")
     }
 
     /// App settings for theme
@@ -201,10 +217,10 @@ struct ClaudeBarApp: App {
                 let events = try await hookServer.start()
                 AppLog.hooks.info("Hook server started, listening for events")
                 for await event in events {
-                    // Ignore ClaudeBar's own background quota probe so routine
+                    // Ignore MyMeter's own background quota probe so routine
                     // polling doesn't spam "Claude Code Finished: Probe"
                     // notifications or pollute the recent-sessions list. (issue #172)
-                    guard !event.isClaudeBarProbe else { continue }
+                    guard !event.isMyMeterProbe else { continue }
                     await sessionMonitor.processEvent(event)
                     await sendSessionNotification(for: event)
                 }
@@ -289,7 +305,7 @@ struct ClaudeBarApp: App {
         // Standalone Settings window (opened from the popover's gear button).
         // Hidden title bar: the sidebar runs the full window height and the
         // traffic lights overlay its top — see SettingsWindowView.
-        Window("ClaudeBar Settings", id: "settings") {
+        Window("MyMeter Settings", id: "settings") {
             Group {
                 #if ENABLE_SPARKLE
                 SettingsWindowView(monitor: monitor) { enabled in

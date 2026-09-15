@@ -267,6 +267,127 @@ struct CodexAPIUsageProbeTests {
         #expect(snapshot.costUsage?.budget == 1000)
     }
 
+    // MARK: - spend_control.individual_limit (Enterprise monthly credits)
+
+    @Test
+    func `probe maps spend_control individual_limit to monthly quota`() async throws {
+        let tempDir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        try createAuthFile(at: tempDir)
+
+        let mockNetwork = MockNetworkClient()
+        let responseJSON = """
+        {
+          "rate_limit": {
+            "primary_window": { "used_percent": 30.0 }
+          },
+          "spend_control": {
+            "reached": false,
+            "individual_limit": {
+              "limit": "25000",
+              "used": "8000",
+              "remaining_percent": 68,
+              "reset_at": 1778137680
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let response = HTTPURLResponse(
+            url: URL(string: "https://chatgpt.com")!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+
+        given(mockNetwork).request(.any).willReturn((responseJSON, response))
+
+        let loader = CodexCredentialLoader(homeDirectory: tempDir.path)
+        let probe = CodexAPIUsageProbe(credentialLoader: loader, networkClient: mockNetwork)
+
+        let snapshot = try await probe.probe()
+        let monthly = snapshot.quota(for: .timeLimit("Monthly"))
+
+        #expect(snapshot.sessionQuota?.percentRemaining == 70)
+        #expect(monthly?.percentRemaining == 68)
+        #expect(monthly?.resetText == "8,000 / 25,000 credits")
+        #expect(monthly?.resetsAt == Date(timeIntervalSince1970: 1_778_137_680))
+    }
+
+    @Test
+    func `probe maps spend_control individual_limit using used_percent fallback`() async throws {
+        let tempDir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        try createAuthFile(at: tempDir)
+
+        let mockNetwork = MockNetworkClient()
+        let responseJSON = """
+        {
+          "spend_control": {
+            "individual_limit": {
+              "limit": "25000",
+              "used": "8000",
+              "used_percent": 32
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let response = HTTPURLResponse(
+            url: URL(string: "https://chatgpt.com")!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+
+        given(mockNetwork).request(.any).willReturn((responseJSON, response))
+
+        let loader = CodexCredentialLoader(homeDirectory: tempDir.path)
+        let probe = CodexAPIUsageProbe(credentialLoader: loader, networkClient: mockNetwork)
+
+        let snapshot = try await probe.probe()
+        #expect(snapshot.quota(for: .timeLimit("Monthly"))?.percentRemaining == 68)
+    }
+
+    @Test
+    func `probe ignores null spend_control individual_limit`() async throws {
+        let tempDir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        try createAuthFile(at: tempDir)
+
+        let mockNetwork = MockNetworkClient()
+        let responseJSON = """
+        {
+          "rate_limit": {
+            "primary_window": { "used_percent": 10.0 }
+          },
+          "spend_control": {
+            "reached": false,
+            "individual_limit": null
+          }
+        }
+        """.data(using: .utf8)!
+
+        let response = HTTPURLResponse(
+            url: URL(string: "https://chatgpt.com")!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+
+        given(mockNetwork).request(.any).willReturn((responseJSON, response))
+
+        let loader = CodexCredentialLoader(homeDirectory: tempDir.path)
+        let probe = CodexAPIUsageProbe(credentialLoader: loader, networkClient: mockNetwork)
+
+        let snapshot = try await probe.probe()
+        #expect(snapshot.quota(for: .timeLimit("Monthly")) == nil)
+        #expect(snapshot.sessionQuota?.percentRemaining == 90)
+    }
+
     // MARK: - Empty Response Tests
 
     @Test

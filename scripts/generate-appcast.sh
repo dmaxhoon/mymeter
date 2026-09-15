@@ -11,7 +11,7 @@
 #
 # Example:
 #   SPARKLE_EDDSA_PRIVATE_KEY="..." ./scripts/generate-appcast.sh \
-#     ClaudeBar-1.0.0.zip 1.0.0 https://github.com/.../ClaudeBar-1.0.0.zip
+#     MyMeter-1.0.0.zip 1.0.0 https://github.com/.../MyMeter-1.0.0.zip
 
 set -e
 
@@ -90,9 +90,9 @@ cat > "$APPCAST_FILE" << EOF
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
-    <title>ClaudeBar Updates</title>
-    <link>https://tddworks.github.io/claudebar/appcast.xml</link>
-    <description>Most recent updates for ClaudeBar</description>
+    <title>MyMeter Updates</title>
+    <link>https://dmaxhoon.github.io/mymeter/appcast.xml</link>
+    <description>Most recent updates for MyMeter</description>
     <language>en</language>
     <item>
       <title>Version ${VERSION}</title>

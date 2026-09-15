@@ -39,11 +39,10 @@ struct CodexProviderTests {
     }
 
     @Test
-    func `codex provider has dashboard URL pointing to openai`() {
+    func `codex provider has dashboard URL pointing to chatgpt usage settings`() {
         let settings = makeSettingsRepository()
         let codex = CodexProvider(probe: MockUsageProbe(), settingsRepository: settings)
-        #expect(codex.dashboardURL != nil)
-        #expect(codex.dashboardURL?.host?.contains("openai") == true)
+        #expect(codex.dashboardURL?.absoluteString == "https://chatgpt.com/codex/settings/usage")
     }
 
     @Test

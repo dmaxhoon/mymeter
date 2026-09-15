@@ -14,7 +14,7 @@ public final class HookHTTPServer: @unchecked Sendable {
 
     /// Serial queue for synchronizing all mutable state.
     /// NWListener and NWConnection callbacks also run on this queue.
-    private let queue = DispatchQueue(label: "com.tddworks.claudebar.hookserver")
+    private let queue = DispatchQueue(label: "com.dmaxhoon.mymeter.hookserver")
 
     /// The actual port the server is listening on
     public private(set) var actualPort: UInt16 = 0

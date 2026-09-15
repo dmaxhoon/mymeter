@@ -20,11 +20,64 @@ public struct CodexRateLimitsResponse: Sendable, Equatable {
     public let primary: CodexRateLimitWindow?
     public let secondary: CodexRateLimitWindow?
     public let planType: String?
+    /// Enterprise monthly credit cap from `rateLimits.individualLimit`.
+    public let individualLimit: CodexIndividualLimit?
 
-    public init(primary: CodexRateLimitWindow?, secondary: CodexRateLimitWindow?, planType: String? = nil) {
+    public init(
+        primary: CodexRateLimitWindow?,
+        secondary: CodexRateLimitWindow?,
+        planType: String? = nil,
+        individualLimit: CodexIndividualLimit? = nil
+    ) {
         self.primary = primary
         self.secondary = secondary
         self.planType = planType
+        self.individualLimit = individualLimit
+    }
+}
+
+/// Enterprise monthly credit limit from Codex `account/rateLimits/read`.
+public struct CodexIndividualLimit: Sendable, Equatable {
+    public let remainingPercent: Double
+    public let resetDescription: String?
+    public let resetsAt: Date?
+    public let used: Double?
+    public let limit: Double?
+
+    public init(
+        remainingPercent: Double,
+        resetDescription: String? = nil,
+        resetsAt: Date? = nil,
+        used: Double? = nil,
+        limit: Double? = nil
+    ) {
+        self.remainingPercent = remainingPercent
+        self.resetDescription = resetDescription
+        self.resetsAt = resetsAt
+        self.used = used
+        self.limit = limit
+    }
+
+    /// Card caption for the monthly credit meter, e.g. "5,187 / 6,000 credits".
+    public var usageCaption: String? {
+        guard let used, let limit else { return nil }
+        return Self.formattedUsage(used: used, limit: limit)
+    }
+
+    public static func formattedUsage(used: Double, limit: Double) -> String {
+        "\(formatCreditNumber(used)) / \(formatCreditNumber(limit)) credits"
+    }
+
+    private static func formatCreditNumber(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = true
+        formatter.groupingSeparator = ","
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 0
+        let ceiled = ceil(value)
+        return formatter.string(from: NSNumber(value: ceiled)) ?? "\(Int(ceiled))"
     }
 }
 
@@ -60,7 +113,8 @@ public struct CodexUsageProbe: UsageProbe {
 
         AppLog.probes.info("Codex probe success: \(snapshot.quotas.count) quotas found")
         for quota in snapshot.quotas {
-            AppLog.probes.info("  - \(quota.quotaType.displayName): \(Int(quota.percentRemaining))% remaining")
+            let detail = quota.resetText.map { ", \($0)" } ?? ""
+            AppLog.probes.info("  - \(quota.quotaType.displayName): \(Int(quota.percentRemaining))% remaining\(detail)")
         }
         return snapshot
     }
@@ -87,6 +141,16 @@ public struct CodexUsageProbe: UsageProbe {
             ))
         }
 
+        if let individual = limits.individualLimit {
+            quotas.append(UsageQuota(
+                percentRemaining: individual.remainingPercent,
+                quotaType: .timeLimit("Monthly"),
+                providerId: "codex",
+                resetsAt: individual.resetsAt,
+                resetText: individual.usageCaption ?? individual.resetDescription
+            ))
+        }
+
         guard !quotas.isEmpty else {
             AppLog.probes.error("Codex probe failed: no rate limits in RPC response")
             throw ProbeError.parseFailed("No rate limits found")
@@ -110,6 +174,9 @@ public struct CodexUsageProbe: UsageProbe {
 
         let fiveHourPct = extractPercent(labelSubstring: "5h limit", text: clean)
         let weeklyPct = extractPercent(labelSubstring: "Weekly limit", text: clean)
+        let monthlyCredits = extractCreditUsage(labelSubstring: "monthly credit limit", text: clean)
+        let monthlyPct = extractPercent(labelSubstring: "monthly credit limit", text: clean)
+            ?? monthlyCredits.map { Int(((($0.limit - $0.used) / $0.limit) * 100).rounded()) }
 
         var quotas: [UsageQuota] = []
 
@@ -126,6 +193,15 @@ public struct CodexUsageProbe: UsageProbe {
                 percentRemaining: Double(weeklyPct),
                 quotaType: .weekly,
                 providerId: "codex"
+            ))
+        }
+
+        if let monthlyPct {
+            quotas.append(UsageQuota(
+                percentRemaining: Double(monthlyPct),
+                quotaType: .timeLimit("Monthly"),
+                providerId: "codex",
+                resetText: monthlyCredits.map { CodexIndividualLimit.formattedUsage(used: $0.used, limit: $0.limit) }
             ))
         }
 
@@ -165,8 +241,42 @@ public struct CodexUsageProbe: UsageProbe {
         return nil
     }
 
+    private struct CreditUsage {
+        let used: Double
+        let limit: Double
+    }
+
+    private static func extractCreditUsage(labelSubstring: String, text: String) -> CreditUsage? {
+        let lines = text.components(separatedBy: .newlines)
+        let label = labelSubstring.lowercased()
+        let pattern = #"([0-9,]+(?:\.[0-9]+)?)\s+of\s+([0-9,]+(?:\.[0-9]+)?)\s+credits\s+used"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return nil
+        }
+
+        for (idx, line) in lines.enumerated() where line.lowercased().contains(label) {
+            let window = lines.dropFirst(idx).prefix(12)
+            for candidate in window {
+                let range = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
+                guard let match = regex.firstMatch(in: candidate, options: [], range: range),
+                      match.numberOfRanges >= 3,
+                      let usedRange = Range(match.range(at: 1), in: candidate),
+                      let limitRange = Range(match.range(at: 2), in: candidate) else {
+                    continue
+                }
+                let usedText = candidate[usedRange].replacingOccurrences(of: ",", with: "")
+                let limitText = candidate[limitRange].replacingOccurrences(of: ",", with: "")
+                guard let used = Double(usedText), let limit = Double(limitText), limit > 0 else {
+                    continue
+                }
+                return CreditUsage(used: used, limit: limit)
+            }
+        }
+        return nil
+    }
+
     private static func percentFromLine(_ line: String) -> Int? {
-        let pattern = #"([0-9]{1,3})%\s+left"#
+        let pattern = #"([0-9]{1,3})%\s+(?:left|remaining)"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
             return nil
         }

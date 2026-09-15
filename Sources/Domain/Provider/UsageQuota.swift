@@ -93,6 +93,13 @@ public struct UsageQuota: Sendable, Equatable, Hashable, Comparable {
 
     // MARK: - Domain Behavior
 
+    /// Used/limit caption shown under the percentage (e.g. "5,187 / 6,000 credits").
+    /// Reset countdowns stay in `resetTimestampDescription` / the clock line, not here.
+    public var usageCaption: String? {
+        guard let resetText else { return nil }
+        return resetText.lowercased().hasPrefix("reset") ? nil : resetText
+    }
+
     /// The current health status based on percentage remaining.
     /// This is a domain rule: status is determined by business thresholds.
     public var status: QuotaStatus {

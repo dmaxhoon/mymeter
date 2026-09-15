@@ -158,7 +158,7 @@ struct MenuContentView: View {
         .onChange(of: selectedProviderId) { _, newProviderId in
             // Refresh immediately when the user switches provider while the
             // dropdown is open. Periodic background refresh is owned by the
-            // app-lifetime loop in ClaudeBarApp, which restarts itself when the
+            // app-lifetime loop in MyMeterApp, which restarts itself when the
             // selected or menu-bar provider changes.
             Task {
                 await refresh(providerId: newProviderId)
@@ -250,7 +250,7 @@ struct MenuContentView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
-                    Text("ClaudeBar")
+                    Text("MyMeter")
                         .font(.system(size: 18, weight: .bold, design: theme.fontDesign))
                         .foregroundStyle(theme.textPrimary)
 
@@ -430,6 +430,7 @@ struct MenuContentView: View {
             }
         } else if let provider = selectedProvider, let snapshot = provider.snapshot {
             VStack(spacing: 12) {
+                accountPicker(for: provider)
                 if let displayName = snapshot.accountEmail ?? snapshot.accountOrganization {
                     accountCard(displayName: displayName, snapshot: snapshot)
                 }
@@ -476,20 +477,36 @@ struct MenuContentView: View {
     }
 
     private func providerSectionHeader(provider: any AIProvider) -> some View {
-        HStack(spacing: 8) {
-            ProviderIconView(providerId: provider.id, size: 20, showGlow: false)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ProviderIconView(providerId: provider.id, size: 20, showGlow: false)
 
-            Text(provider.name)
-                .font(.system(size: 13, weight: .semibold, design: theme.fontDesign))
-                .foregroundStyle(theme.textPrimary)
+                Text(provider.name)
+                    .font(.system(size: 13, weight: .semibold, design: theme.fontDesign))
+                    .foregroundStyle(theme.textPrimary)
 
-            Spacer()
+                Spacer()
 
-            let status = provider.snapshot?.overallStatus ?? .healthy
-            Text(provider.isSyncing ? "Syncing..." : status.badgeText)
-                .badge(theme.statusColor(for: status))
+                let status = provider.snapshot?.overallStatus ?? .healthy
+                Text(provider.isSyncing ? "Syncing..." : status.badgeText)
+                    .badge(theme.statusColor(for: status))
+            }
+
+            accountPicker(for: provider)
         }
         .padding(.horizontal, 4)
+    }
+
+    @ViewBuilder
+    private func accountPicker(for provider: any AIProvider) -> some View {
+        if let multi = provider as? any MultiAccountProvider, multi.accounts.count > 1 {
+            AccountPickerView(provider: multi) { accountId in
+                guard multi.switchAccount(to: accountId) else { return }
+                Task {
+                    try? await multi.refresh()
+                }
+            }
+        }
     }
 
     private func compactErrorState(provider: any AIProvider) -> some View {
@@ -714,7 +731,7 @@ struct MenuContentView: View {
             }
 
             // Show daily usage cards from JSONL session analysis (e.g., Claude Code)
-            // Controlled via Settings toggle or ~/.claudebar/settings.json
+            // Controlled via Settings toggle or ~/.mymeter/settings.json
             if settings.showDailyUsageCards, let report = snapshot.dailyUsageReport {
                 let baseDelay = Double(snapshot.quotas.count + 1) * 0.08
                 HStack(spacing: 10) {
@@ -894,7 +911,7 @@ struct MenuContentView: View {
                 }
             }
             .buttonStyle(.plain)
-            .help("Quit ClaudeBar")
+            .help("Quit MyMeter")
             .keyboardShortcut("q")
         }
         .opacity(animateIn ? 1 : 0)
@@ -1209,6 +1226,14 @@ struct WrappedStatCard: View {
                     .foregroundStyle(effectiveDisplayMode == .pace ? paceColor.opacity(0.8) : theme.textTertiary)
             }
 
+            if let caption = quota.usageCaption {
+                Text(caption)
+                    .font(.system(size: 9, weight: .medium, design: theme.fontDesign))
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+
             // Progress bar with gradient and pace tick
             VStack(spacing: 1) {
                 GeometryReader { geo in
@@ -1247,16 +1272,21 @@ struct WrappedStatCard: View {
             .help(quota.paceTickHelp(mode: effectiveDisplayMode) ?? "")
 
             // Reset info (hidden when the grid hoisted a shared countdown)
-            if showsReset, let resetText = quota.resetTimestampDescription ?? quota.resetText ?? quota.resetDescription {
-                HStack(spacing: 3) {
-                    Image(systemName: "clock.fill")
-                        .font(.system(size: 7))
+            if showsReset {
+                let footer = quota.resetTimestampDescription
+                    ?? (quota.usageCaption == nil ? quota.resetText : nil)
+                    ?? quota.resetDescription
+                if let footer {
+                    HStack(spacing: 3) {
+                        Image(systemName: "clock.fill")
+                            .font(.system(size: 7))
 
-                    Text(resetText)
-                        .font(.system(size: 8, weight: .medium, design: theme.fontDesign))
+                        Text(footer)
+                            .font(.system(size: 8, weight: .medium, design: theme.fontDesign))
+                    }
+                    .foregroundStyle(theme.textTertiary)
+                    .lineLimit(1)
                 }
-                .foregroundStyle(theme.textTertiary)
-                .lineLimit(1)
             }
         }
         .padding(12)
