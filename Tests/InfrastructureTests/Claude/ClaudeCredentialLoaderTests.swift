@@ -72,7 +72,7 @@ struct ClaudeCredentialLoaderTests {
             subscriptionType: "claude_max"
         )
 
-        let loader = ClaudeCredentialLoader(homeDirectory: tempDir.path)
+        let loader = ClaudeCredentialLoader(homeDirectory: tempDir.path, useKeychain: false)
         let result = loader.loadCredentials()
 
         #expect(result != nil)
@@ -131,6 +131,70 @@ struct ClaudeCredentialLoaderTests {
         #expect(credentials == nil)
     }
 
+    // MARK: - File vs Keychain Selection Tests
+
+    private func makeResult(token: String, expiresAt: Double?, source: CredentialSource) -> ClaudeCredentialResult {
+        ClaudeCredentialResult(
+            oauth: ClaudeOAuthCredentials(accessToken: token, refreshToken: "refresh", expiresAt: expiresAt),
+            source: source,
+            fullData: [:]
+        )
+    }
+
+    @Test
+    func `fresher keychain credentials win over a stale credentials file`() {
+        let stale = Date().addingTimeInterval(-90 * 24 * 3600).timeIntervalSince1970 * 1000
+        let fresh = Date().addingTimeInterval(3600).timeIntervalSince1970 * 1000
+
+        let result = ClaudeCredentialLoader.preferredCredentials(
+            file: makeResult(token: "stale-file-token", expiresAt: stale, source: .file),
+            keychain: makeResult(token: "fresh-keychain-token", expiresAt: fresh, source: .keychain)
+        )
+
+        #expect(result?.oauth.accessToken == "fresh-keychain-token")
+        #expect(result?.source == .keychain)
+    }
+
+    @Test
+    func `credentials file wins when it is at least as fresh as the keychain`() {
+        let expiry = Date().addingTimeInterval(3600).timeIntervalSince1970 * 1000
+
+        let result = ClaudeCredentialLoader.preferredCredentials(
+            file: makeResult(token: "file-token", expiresAt: expiry, source: .file),
+            keychain: makeResult(token: "keychain-token", expiresAt: expiry, source: .keychain)
+        )
+
+        #expect(result?.source == .file)
+    }
+
+    @Test
+    func `credentials file wins when keychain expiry is unknown`() {
+        let expiry = Date().addingTimeInterval(-3600).timeIntervalSince1970 * 1000
+
+        let result = ClaudeCredentialLoader.preferredCredentials(
+            file: makeResult(token: "file-token", expiresAt: expiry, source: .file),
+            keychain: makeResult(token: "keychain-token", expiresAt: nil, source: .keychain)
+        )
+
+        #expect(result?.source == .file)
+    }
+
+    @Test
+    func `whichever single source exists is used`() {
+        let keychainOnly = ClaudeCredentialLoader.preferredCredentials(
+            file: nil,
+            keychain: makeResult(token: "keychain-token", expiresAt: nil, source: .keychain)
+        )
+        let fileOnly = ClaudeCredentialLoader.preferredCredentials(
+            file: makeResult(token: "file-token", expiresAt: nil, source: .file),
+            keychain: nil
+        )
+
+        #expect(keychainOnly?.source == .keychain)
+        #expect(fileOnly?.source == .file)
+        #expect(ClaudeCredentialLoader.preferredCredentials(file: nil, keychain: nil) == nil)
+    }
+
     // MARK: - Token Expiry Tests
 
     @Test
@@ -142,7 +206,7 @@ struct ClaudeCredentialLoaderTests {
         let pastTime = Date().addingTimeInterval(-3600).timeIntervalSince1970 * 1000
         try createCredentialsFile(at: tempDir, expiresAt: pastTime)
 
-        let loader = ClaudeCredentialLoader(homeDirectory: tempDir.path)
+        let loader = ClaudeCredentialLoader(homeDirectory: tempDir.path, useKeychain: false)
         let result = loader.loadCredentials()
 
         #expect(result != nil)
@@ -158,7 +222,7 @@ struct ClaudeCredentialLoaderTests {
         let nearFuture = Date().addingTimeInterval(4 * 60).timeIntervalSince1970 * 1000
         try createCredentialsFile(at: tempDir, expiresAt: nearFuture)
 
-        let loader = ClaudeCredentialLoader(homeDirectory: tempDir.path)
+        let loader = ClaudeCredentialLoader(homeDirectory: tempDir.path, useKeychain: false)
         let result = loader.loadCredentials()
 
         #expect(result != nil)
@@ -174,7 +238,7 @@ struct ClaudeCredentialLoaderTests {
         let futureTime = Date().addingTimeInterval(3600).timeIntervalSince1970 * 1000
         try createCredentialsFile(at: tempDir, expiresAt: futureTime)
 
-        let loader = ClaudeCredentialLoader(homeDirectory: tempDir.path)
+        let loader = ClaudeCredentialLoader(homeDirectory: tempDir.path, useKeychain: false)
         let result = loader.loadCredentials()
 
         #expect(result != nil)
@@ -188,7 +252,7 @@ struct ClaudeCredentialLoaderTests {
 
         try createCredentialsFile(at: tempDir, expiresAt: nil)
 
-        let loader = ClaudeCredentialLoader(homeDirectory: tempDir.path)
+        let loader = ClaudeCredentialLoader(homeDirectory: tempDir.path, useKeychain: false)
         let result = loader.loadCredentials()
 
         #expect(result != nil)
@@ -208,7 +272,7 @@ struct ClaudeCredentialLoaderTests {
             refreshToken: "old-refresh"
         )
 
-        let loader = ClaudeCredentialLoader(homeDirectory: tempDir.path)
+        let loader = ClaudeCredentialLoader(homeDirectory: tempDir.path, useKeychain: false)
         var result = loader.loadCredentials()!
 
         // Update the token

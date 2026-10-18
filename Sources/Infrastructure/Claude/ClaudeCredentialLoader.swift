@@ -47,7 +47,7 @@ public struct ClaudeCredentialResult: @unchecked Sendable {
 ///
 /// Credential resolution order:
 /// 1. File: `~/.claude/.credentials.json` (full-scope from `claude login`)
-/// 2. Keychain: Service "Claude Code-credentials" (if enabled)
+/// 2. Keychain: Service "Claude Code-credentials" (if enabled; wins over the file when its token expires later)
 /// 3. Environment: `CLAUDE_CODE_OAUTH_TOKEN` env var (inference-only from `claude setup-token`)
 public struct ClaudeCredentialLoader: Sendable {
     private let homeDirectory: String
@@ -140,14 +140,10 @@ public struct ClaudeCredentialLoader: Sendable {
     /// This ensures quota monitoring uses full-scope credentials when available,
     /// while still falling back to the env var token if nothing else exists.
     public func loadCredentials() -> ClaudeCredentialResult? {
-        // Try file first (full-scope OAuth from `claude login`)
-        if let fileResult = loadFromFile() {
-            return fileResult
-        }
-
-        // Keychain (if enabled)
-        if useKeychain, let keychainResult = loadFromKeychain() {
-            return keychainResult
+        let fileResult = loadFromFile()
+        let keychainResult = useKeychain ? loadFromKeychain() : nil
+        if let preferred = Self.preferredCredentials(file: fileResult, keychain: keychainResult) {
+            return preferred
         }
 
         // Fallback to environment variable (setup-token, inference-only scope)
@@ -156,6 +152,23 @@ public struct ClaudeCredentialLoader: Sendable {
         }
 
         return nil
+    }
+
+    /// Picks between file and Keychain credentials. The file wins unless the
+    /// Keychain holds a strictly later expiry: on macOS `claude login` writes
+    /// only to the Keychain, so a leftover file with a revoked refresh token
+    /// would otherwise shadow a fresh login forever.
+    static func preferredCredentials(
+        file: ClaudeCredentialResult?,
+        keychain: ClaudeCredentialResult?
+    ) -> ClaudeCredentialResult? {
+        guard let file else { return keychain }
+        guard let keychain,
+              let keychainExpiry = keychain.oauth.expiresAt,
+              keychainExpiry > (file.oauth.expiresAt ?? -.infinity) else {
+            return file
+        }
+        return keychain
     }
 
     /// Checks if the token needs to be refreshed (expired or within 5 minutes of expiry).
