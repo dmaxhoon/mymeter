@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Grok token refresh is now delegated to the `grok` CLI (headless `grok models`) so the CLI stays the only writer of `auth.json`; the in-app OIDC refresh remains as a fallback when the CLI is unavailable.
 
 ### Fixed
+- A Grok account that has not spent anything in the current period showed no usage at all. xAI omits zero-valued fields from the billing response, so an active period without `creditUsagePercent` is now reported as 100% remaining.
 - Grok `GROK_HOME` paths now follow the CLI's own layout (`$GROK_HOME/auth.json`, default `~/.grok`). Picking a folder signed in with `GROK_HOME=~/.grok-work grok login` previously looked for `~/.grok-work/.grok/auth.json` and failed.
 
 ---

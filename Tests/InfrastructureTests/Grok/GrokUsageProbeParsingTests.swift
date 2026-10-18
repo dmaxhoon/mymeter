@@ -151,6 +151,55 @@ struct GrokUsageProbeParsingTests {
         #expect(snapshot.quotas.isEmpty)
     }
 
+    /// xAI serialises protobuf with default-value omission: an account that has
+    /// not spent anything this period gets a `currentPeriod` but no
+    /// `creditUsagePercent` / `productUsage` at all.
+    @Test
+    func `unused account with an active period reports full credit remaining`() throws {
+        let json = """
+        {
+          "config": {
+            "currentPeriod": {
+              "type": "USAGE_PERIOD_TYPE_WEEKLY",
+              "start": "2026-09-13T18:04:49.713097+00:00",
+              "end": "2026-09-20T18:04:49.713097+00:00"
+            },
+            "onDemandCap": {"val": 0},
+            "onDemandUsed": {"val": 0},
+            "isUnifiedBillingUser": true,
+            "prepaidBalance": {"val": 0}
+          }
+        }
+        """
+
+        let now = try #require(GrokCredentialLoader.parseDate("2026-09-15T14:00:00Z"))
+        let snapshot = try GrokUsageProbe.parseResponse(Data(json.utf8), providerId: "grok", now: now)
+
+        #expect(snapshot.quotas.count == 1)
+        let weekly = try #require(snapshot.quota(for: .weekly))
+        #expect(weekly.percentRemaining == 100)
+        #expect(weekly.resetsAt == GrokCredentialLoader.parseDate("2026-09-20T18:04:49.713097+00:00"))
+        #expect(weekly.resetText?.hasPrefix("Resets in 5d") == true)
+    }
+
+    @Test
+    func `product entry without usagePercent counts as unused`() throws {
+        let json = """
+        {
+          "config": {
+            "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY", "start": "2026-09-13T00:00:00Z", "end": "2026-09-20T00:00:00Z"},
+            "creditUsagePercent": 12,
+            "productUsage": [{"product": "GrokBuild"}, {"product": "GrokImagine", "usagePercent": 30}]
+          }
+        }
+        """
+
+        let snapshot = try GrokUsageProbe.parseResponse(Data(json.utf8), providerId: "grok")
+
+        #expect(snapshot.quota(for: .modelSpecific("Build"))?.percentRemaining == 100)
+        #expect(snapshot.quota(for: .modelSpecific("Imagine"))?.percentRemaining == 70)
+    }
+
     @Test
     func `throws parseFailed on invalid JSON`() {
         #expect(throws: ProbeError.parseFailed("Failed to parse billing response as JSON")) {

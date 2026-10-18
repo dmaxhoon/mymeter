@@ -257,8 +257,11 @@ public struct GrokUsageProbe: UsageProbe, @unchecked Sendable {
 
         var quotas: [UsageQuota] = []
 
-        // Overall credit usage for the current period
-        if let creditUsagePercent = doubleValue(config["creditUsagePercent"]) {
+        // Overall credit usage for the current period. xAI omits zero-valued
+        // fields (protobuf JSON), so an untouched account has an active period
+        // but no `creditUsagePercent` — that means 0% used, not "no data".
+        let creditUsagePercent = doubleValue(config["creditUsagePercent"]) ?? (period != nil ? 0 : nil)
+        if let creditUsagePercent {
             quotas.append(UsageQuota(
                 percentRemaining: max(-100, 100 - creditUsagePercent),
                 quotaType: periodQuotaType,
@@ -271,10 +274,11 @@ public struct GrokUsageProbe: UsageProbe, @unchecked Sendable {
 
         // Per-product usage (Grok Build, Grok Imagine, Grok Voice, ...)
         for product in (config["productUsage"] as? [[String: Any]]) ?? [] {
-            guard let name = product["product"] as? String,
-                  let usagePercent = doubleValue(product["usagePercent"]) else {
+            guard let name = product["product"] as? String else {
                 continue
             }
+            // Same zero-omission rule: a listed product without a percentage is unused.
+            let usagePercent = doubleValue(product["usagePercent"]) ?? 0
             quotas.append(UsageQuota(
                 percentRemaining: max(-100, 100 - usagePercent),
                 quotaType: .modelSpecific(productDisplayName(name)),
