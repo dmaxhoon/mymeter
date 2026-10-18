@@ -138,7 +138,12 @@ public final class ClaudeUsageProbe: UsageProbe, @unchecked Sendable {
                 workingDirectory: workingDir,
                 autoResponses: [:]
             )
-            let loggedIn = extractFirst(pattern: #""loggedIn"\s*:\s*(true|false)"#, text: result.output)
+            // Under a PTY the CLI spaces JSON with cursor-column escapes, so
+            // render it like a terminal before matching.
+            let loggedIn = extractFirst(
+                pattern: #""loggedIn"\s*:\s*(true|false)"#,
+                text: renderTerminalOutput(result.output)
+            )
             return loggedIn?.lowercased() == "false"
         } catch {
             AppLog.probes.debug("Claude auth status check failed: \(error.localizedDescription)")

@@ -402,6 +402,20 @@ struct ClaudeUsageProbeTests {
     }
 
     @Test
+    func `probe detects logged-out status from cursor-positioned PTY output`() async throws {
+        // Under a PTY Claude Code replaces the space after each JSON key
+        // with a cursor-column escape (ESC[nG).
+        let mockExecutor = makeExecutor(usageOutput: Self.loggedOutUsageOutput)
+        stubAuthStatus(mockExecutor, output: "\u{1B}[?25h{\r\r\n\u{1B}[3G\"loggedIn\":\u{1B}[15Gfalse,\r\r\n"
+            + "\u{1B}[3G\"authMethod\":\u{1B}[17G\"none\",\r\r\n}\r\r\n")
+        let probe = ClaudeUsageProbe(cliExecutor: mockExecutor, accountInfoResolver: NoOpAccountInfoResolver())
+
+        await #expect(throws: ProbeError.sessionExpired()) {
+            try await probe.probe()
+        }
+    }
+
+    @Test
     func `probe keeps parse error when usage has no quotas but auth status is logged in`() async throws {
         let mockExecutor = makeExecutor(usageOutput: Self.loggedOutUsageOutput)
         stubAuthStatus(mockExecutor, output: #"{"loggedIn": true, "authMethod": "claude.ai"}"#)
