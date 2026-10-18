@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cursor now shows the same split as cursor.com/dashboard: **Cursor Models** (Auto, Composer, Cursor Grok) and **Other Models** usage cards. The combined monthly total, which the dashboard no longer displays, is shown only when the API does not report the per-pool breakdown.
 
 ### Changed
+- Percentages in the menu bar and quota cards round to the nearest whole number instead of truncating, so they match what provider dashboards show (21.6% now reads 22%, not 21%).
 - Grok token refresh is now delegated to the `grok` CLI (headless `grok models`) so the CLI stays the only writer of `auth.json`; the in-app OIDC refresh remains as a fallback when the CLI is unavailable.
 
 ### Fixed

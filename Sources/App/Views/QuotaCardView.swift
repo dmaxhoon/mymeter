@@ -51,7 +51,7 @@ struct QuotaCardView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(dollarDisplayColor)
             } else {
-                Text("\(Int(quota.displayPercent(mode: effectiveDisplayMode)))%")
+                Text("\(Int(quota.displayPercent(mode: effectiveDisplayMode).rounded()))%")
                     .font(.title2)
                     .fontWeight(.semibold)
                     .foregroundStyle(effectiveDisplayMode == .pace ? quota.pace.displayColor : effectiveStatus.displayColor)

@@ -178,6 +178,18 @@ struct QuotaMonitorTests {
     }
 
     @Test
+    func `menu bar percentage display rounds to the nearest whole percent`() {
+        // 78.818% remaining => 21.182% used. Vendor dashboards round, so 21.6% used
+        // must read "22%" rather than truncating to "21%".
+        let usedMostly = UsageQuota(percentRemaining: 78.4, quotaType: .weekly, providerId: "cursor")
+        let usedLess = UsageQuota(percentRemaining: 78.818, quotaType: .weekly, providerId: "cursor")
+
+        #expect(MenuBarPercentageDisplay(quota: usedMostly, mode: .used).text == "22%")
+        #expect(MenuBarPercentageDisplay(quota: usedLess, mode: .used).text == "21%")
+        #expect(MenuBarPercentageDisplay(quota: usedMostly, mode: .remaining).text == "78%")
+    }
+
+    @Test
     func `menu bar percentage display falls back when quota data is missing`() {
         // Given
         let settings = makeSettingsRepository()

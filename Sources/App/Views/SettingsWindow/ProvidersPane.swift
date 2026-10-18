@@ -83,7 +83,7 @@ private struct ProviderListRow: View {
 
                 if provider.isEnabled, let quota = lowestQuota {
                     VStack(alignment: .trailing, spacing: 4) {
-                        Text("\(Int(quota.percentRemaining))%")
+                        Text("\(Int(quota.percentRemaining.rounded()))%")
                             .font(.system(size: 12, weight: .bold, design: theme.fontDesign))
                             .foregroundStyle(theme.statusColor(for: quota.status))
                             .monospacedDigit()

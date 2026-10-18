@@ -633,7 +633,7 @@ struct MenuContentView: View {
                     } else {
                         // Collapsed sections keep their headline number visible.
                         if isCollapsed, let lowest = group.lowestQuota {
-                            Text("\(Int(lowest.percentRemaining))% left")
+                            Text("\(Int(lowest.percentRemaining.rounded()))% left")
                                 .font(.system(size: 9, weight: .semibold, design: theme.fontDesign))
                                 .foregroundStyle(theme.textTertiary)
                         }
@@ -1207,7 +1207,7 @@ struct WrappedStatCard: View {
                         .contentTransition(.numericText())
                 } else {
                     HStack(alignment: .firstTextBaseline, spacing: 1) {
-                        Text("\(Int(quota.displayPercent(mode: effectiveDisplayMode)))")
+                        Text("\(Int(quota.displayPercent(mode: effectiveDisplayMode).rounded()))")
                             .font(.system(size: 26, weight: .bold, design: theme.fontDesign))
                             .foregroundStyle(effectiveDisplayMode == .pace ? paceColor : theme.textPrimary)
                             .contentTransition(.numericText())
