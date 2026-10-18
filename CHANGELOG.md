@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multiple accounts for Cursor and Grok. Register extra local sessions in Settings → Providers and switch between them from the account picker in the menu; each account is probed with its own credentials and shows its own usage.
 - Grok accounts can be added with **Sign in with grok CLI**: MyMeter opens Terminal and runs `grok login` in a dedicated `GROK_HOME` under `~/.mymeter/grok/<account>`, so the default `~/.grok` login is never touched. Each account row has a re-sign-in button for when the session expires.
 - Cursor shows the signed-in account email next to its usage.
+- Cursor now shows the same split as cursor.com/dashboard: **Cursor Models** (Auto, Composer, Cursor Grok) and **Other Models** usage cards. The combined monthly total, which the dashboard no longer displays, is shown only when the API does not report the per-pool breakdown.
 
 ### Changed
 - Grok token refresh is now delegated to the `grok` CLI (headless `grok models`) so the CLI stays the only writer of `auth.json`; the in-app OIDC refresh remains as a fallback when the CLI is unavailable.

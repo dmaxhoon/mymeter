@@ -45,14 +45,118 @@ struct CursorUsageProbeParsingTests {
         let snapshot = try CursorUsageProbe.parseUsageSummary(json)
 
         #expect(snapshot.providerId == "cursor")
-        #expect(snapshot.quotas.count == 1)
         #expect(snapshot.accountTier == .custom("ULTRA"))
 
-        let quota = snapshot.quotas[0]
-        #expect(quota.quotaType == .timeLimit("Monthly"))
-        #expect(abs(quota.percentRemaining - 99.185) < 0.01)
-        #expect(quota.resetText == "326/40000 requests")
-        #expect(quota.resetsAt != nil)
+        // Both pools are reported, so the dashboard-style split replaces the combined total.
+        #expect(snapshot.quotas.map(\.quotaType) == [.modelSpecific("Cursor Models"), .modelSpecific("Other Models")])
+        #expect(abs(snapshot.quotas[0].percentRemaining - 99.967) < 0.01)
+        #expect(abs(snapshot.quotas[1].percentRemaining - 99.414) < 0.01)
+        #expect(snapshot.quotas[0].resetsAt != nil)
+    }
+
+    /// Cursor's dashboard splits the included allotment into "Cursor Models"
+    /// (`autoPercentUsed`) and "Other Models" (`apiPercentUsed`). Mirror both.
+    @Test
+    func `parse ultra plan exposes Cursor Models and Other Models breakdown`() throws {
+        let json = """
+        {
+            "billingCycleStart": "2026-08-16T18:08:44.000Z",
+            "billingCycleEnd": "2026-09-16T18:08:44.000Z",
+            "membershipType": "ultra",
+            "limitType": "user",
+            "isUnlimited": false,
+            "individualUsage": {
+                "plan": {
+                    "enabled": true,
+                    "used": 20927,
+                    "limit": 40000,
+                    "remaining": 19073,
+                    "breakdown": { "included": 20927, "bonus": 0, "total": 20927 },
+                    "autoPercentUsed": 3.4453333333333336,
+                    "apiPercentUsed": 21.182000000000002,
+                    "totalPercentUsed": 5.9791428571428575
+                },
+                "onDemand": { "enabled": false, "used": 0, "limit": null, "remaining": null }
+            },
+            "teamUsage": {}
+        }
+        """.data(using: .utf8)!
+
+        let snapshot = try CursorUsageProbe.parseUsageSummary(json)
+
+        // Matches cursor.com/dashboard, which shows the two pools and no combined total.
+        #expect(snapshot.quotas.map(\.quotaType) == [
+            .modelSpecific("Cursor Models"),
+            .modelSpecific("Other Models"),
+        ])
+
+        let cursorModels = try #require(snapshot.quota(for: .modelSpecific("Cursor Models")))
+        #expect(abs(cursorModels.percentRemaining - 96.555) < 0.01)
+        #expect(cursorModels.resetText == "Includes Cursor Grok and Composer")
+        #expect(cursorModels.resetsAt != nil)
+
+        let otherModels = try #require(snapshot.quota(for: .modelSpecific("Other Models")))
+        #expect(abs(otherModels.percentRemaining - 78.818) < 0.01)
+        #expect(otherModels.resetText == nil)
+        #expect(otherModels.resetsAt == cursorModels.resetsAt)
+    }
+
+    @Test
+    func `model breakdown is omitted when the API does not report it`() throws {
+        let json = """
+        {
+            "membershipType": "pro",
+            "isUnlimited": false,
+            "individualUsage": {
+                "plan": { "enabled": true, "used": 123, "limit": 500, "remaining": 377 },
+                "onDemand": { "enabled": false, "used": 0, "limit": null, "remaining": null }
+            }
+        }
+        """.data(using: .utf8)!
+
+        let snapshot = try CursorUsageProbe.parseUsageSummary(json)
+
+        #expect(snapshot.quotas.map(\.quotaType) == [.timeLimit("Monthly")])
+    }
+
+    @Test
+    func `model breakdown clamps over-limit usage to zero remaining`() throws {
+        let json = """
+        {
+            "membershipType": "pro",
+            "isUnlimited": false,
+            "individualUsage": {
+                "plan": {
+                    "enabled": true, "used": 500, "limit": 500, "remaining": 0,
+                    "autoPercentUsed": 12.5, "apiPercentUsed": 140.2, "totalPercentUsed": 100
+                },
+                "onDemand": { "enabled": false, "used": 0, "limit": null, "remaining": null }
+            }
+        }
+        """.data(using: .utf8)!
+
+        let snapshot = try CursorUsageProbe.parseUsageSummary(json)
+
+        #expect(snapshot.quota(for: .modelSpecific("Other Models"))?.percentRemaining == 0)
+        #expect(snapshot.quota(for: .timeLimit("Monthly")) == nil)
+    }
+
+    @Test
+    func `monthly total is kept when only one pool percentage is reported`() throws {
+        let json = """
+        {
+            "membershipType": "pro",
+            "isUnlimited": false,
+            "individualUsage": {
+                "plan": { "enabled": true, "used": 100, "limit": 500, "remaining": 400, "apiPercentUsed": 20 },
+                "onDemand": { "enabled": false, "used": 0, "limit": null, "remaining": null }
+            }
+        }
+        """.data(using: .utf8)!
+
+        let snapshot = try CursorUsageProbe.parseUsageSummary(json)
+
+        #expect(snapshot.quotas.map(\.quotaType) == [.timeLimit("Monthly"), .modelSpecific("Other Models")])
     }
 
     // MARK: - Plan Usage
@@ -172,8 +276,6 @@ struct CursorUsageProbeParsingTests {
                     "limit": 2000,
                     "remaining": 0,
                     "breakdown": { "included": 2000, "bonus": 7770, "total": 9770 },
-                    "autoPercentUsed": 23.05,
-                    "apiPercentUsed": 63.44,
                     "totalPercentUsed": 28.32
                 },
                 "onDemand": { "enabled": false, "used": 0, "limit": null, "remaining": null }
@@ -184,6 +286,7 @@ struct CursorUsageProbeParsingTests {
 
         let snapshot = try CursorUsageProbe.parseUsageSummary(json)
 
+        // No per-pool percentages here, so the combined Monthly total is what gets shown.
         #expect(snapshot.quotas.count == 1)
         let quota = snapshot.quotas[0]
         #expect(quota.quotaType == .timeLimit("Monthly"))
@@ -315,13 +418,14 @@ struct CursorUsageProbeParsingTests {
         #expect(snapshot.providerId == "cursor")
         #expect(snapshot.accountTier == .custom("ENTERPRISE"))
 
-        // Should have individual plan quota (from breakdown.total) + team quota
-        #expect(snapshot.quotas.count == 2)
-
-        let individualQuota = snapshot.quotas.first { $0.quotaType == .timeLimit("Monthly") }
-        #expect(individualQuota != nil)
-        // 6.9% used of 300 -> ~93.1% remaining
-        #expect(abs(individualQuota!.percentRemaining - 93.1) < 0.5)
+        // Cursor Models / Other Models pools (the combined total is dropped) + team quota
+        #expect(snapshot.quotas.map(\.quotaType) == [
+            .modelSpecific("Cursor Models"),
+            .modelSpecific("Other Models"),
+            .timeLimit("Team"),
+        ])
+        // 6.9% of Other Models used -> 93.1% remaining
+        #expect(abs(snapshot.quotas[1].percentRemaining - 93.1) < 0.01)
 
         let teamQuota = snapshot.quotas.first { $0.quotaType == .timeLimit("Team") }
         #expect(teamQuota != nil)

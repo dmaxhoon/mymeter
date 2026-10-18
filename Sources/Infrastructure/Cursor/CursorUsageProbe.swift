@@ -243,7 +243,16 @@ public struct CursorUsageProbe: UsageProbe {
             let breakdownTotal = breakdown.flatMap { Self.intValue(from: $0, key: "total") } ?? 0
             let effectiveLimit = max(limit, breakdownTotal)
 
-            if effectiveLimit > 0 {
+            // Cursor's dashboard splits the included allotment into two pools:
+            // "Cursor Models" (Auto, Composer, Cursor Grok — `autoPercentUsed`) and
+            // "Other Models" (named third-party models — `apiPercentUsed`). When both
+            // are reported we mirror the dashboard exactly and skip the combined
+            // total, which cursor.com no longer displays.
+            let cursorModelsPercentUsed = Self.doubleValue(from: planUsage, key: "autoPercentUsed")
+            let otherModelsPercentUsed = Self.doubleValue(from: planUsage, key: "apiPercentUsed")
+            let showsPoolBreakdown = cursorModelsPercentUsed != nil && otherModelsPercentUsed != nil
+
+            if effectiveLimit > 0, !showsPoolBreakdown {
                 // `totalPercentUsed` is Cursor's authoritative usage figure across the full
                 // capacity (matches the "You've used X%" message in Cursor's own UI). Prefer
                 // it; fall back to used/limit only when the API doesn't provide it.
@@ -263,6 +272,24 @@ public struct CursorUsageProbe: UsageProbe {
                     providerId: "cursor",
                     resetsAt: resetsAt,
                     resetText: "\(effectiveUsed)/\(effectiveLimit) requests"
+                ))
+            }
+
+            if let cursorModelsPercentUsed {
+                quotas.append(UsageQuota(
+                    percentRemaining: max(0, 100 - cursorModelsPercentUsed),
+                    quotaType: .modelSpecific("Cursor Models"),
+                    providerId: "cursor",
+                    resetsAt: resetsAt,
+                    resetText: "Includes Cursor Grok and Composer"
+                ))
+            }
+            if let otherModelsPercentUsed {
+                quotas.append(UsageQuota(
+                    percentRemaining: max(0, 100 - otherModelsPercentUsed),
+                    quotaType: .modelSpecific("Other Models"),
+                    providerId: "cursor",
+                    resetsAt: resetsAt
                 ))
             }
         }
@@ -337,6 +364,17 @@ public struct CursorUsageProbe: UsageProbe {
             accountEmail: accountEmail,
             accountTier: tier
         )
+    }
+
+    /// Extracts a Double from a JSON value that could be Int or Double.
+    private static func doubleValue(from dict: [String: Any], key: String) -> Double? {
+        if let doubleVal = dict[key] as? Double {
+            return doubleVal
+        }
+        if let intVal = dict[key] as? Int {
+            return Double(intVal)
+        }
+        return nil
     }
 
     /// Safely extracts an Int from a JSON dictionary value that could be Int, Double, or NSNumber.
