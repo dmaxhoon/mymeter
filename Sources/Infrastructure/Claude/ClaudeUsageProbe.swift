@@ -99,6 +99,14 @@ public final class ClaudeUsageProbe: UsageProbe, @unchecked Sendable {
             // API Usage Billing accounts don't support /usage, try /cost instead
             AppLog.probes.info("Account requires /cost command, falling back...")
             return try await probeCost(workingDir: workingDir)
+        } catch ProbeError.parseFailed(let message) {
+            // A logged-out CLI renders the Usage tab without quotas and without
+            // any "not logged in" text, so ask the CLI directly.
+            if await isLoggedOut(workingDir: workingDir) {
+                AppLog.probes.error("Claude probe failed: CLI is not logged in")
+                throw ProbeError.sessionExpired(hint: "Run `claude` in terminal to log in again.")
+            }
+            throw ProbeError.parseFailed(message)
         } catch {
             AppLog.probes.debug("Working directory: \(workingDir.path)")
             throw error
@@ -116,6 +124,26 @@ public final class ClaudeUsageProbe: UsageProbe, @unchecked Sendable {
         }
 
         return snapshot
+    }
+
+    /// Returns `true` only when `claude auth status` positively reports
+    /// `"loggedIn": false`; any failure to check counts as "not known".
+    private func isLoggedOut(workingDir: URL) async -> Bool {
+        do {
+            let result = try await cliExecutor.execute(
+                binary: claudeBinary,
+                args: ["auth", "status", "--json"],
+                input: "",
+                timeout: 10,
+                workingDirectory: workingDir,
+                autoResponses: [:]
+            )
+            let loggedIn = extractFirst(pattern: #""loggedIn"\s*:\s*(true|false)"#, text: result.output)
+            return loggedIn?.lowercased() == "false"
+        } catch {
+            AppLog.probes.debug("Claude auth status check failed: \(error.localizedDescription)")
+            return false
+        }
     }
 
     /// Probes using /cost command for API Usage Billing accounts

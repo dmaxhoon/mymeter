@@ -341,6 +341,95 @@ struct ClaudeUsageProbeTests {
         #expect(snapshot.sessionQuota?.percentRemaining == 99)
     }
 
+    // MARK: - Logged-out Detection
+
+    /// What `claude /usage` renders on Claude Code 2.1.301 when logged out:
+    /// the Usage tab shows only session cost, with no quota bars and no
+    /// "not logged in" message.
+    private static let loggedOutUsageOutput = """
+      Settings  Status   Config   Usage   Stats
+
+      Session
+
+      Total cost:            $0.0000
+      Total duration (API):  0s
+      Total duration (wall): 0s
+      Total code changes:    0 lines added, 0 lines removed
+      Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+
+      Esc to cancel
+    """
+
+    private func makeExecutor(usageOutput: String) -> MockCLIExecutor {
+        let mockExecutor = MockCLIExecutor()
+        given(mockExecutor).execute(
+            binary: .any,
+            args: .matching { $0.first == "/usage" },
+            input: .any,
+            timeout: .any,
+            workingDirectory: .any,
+            autoResponses: .any
+        ).willReturn(CLIResult(output: usageOutput, exitCode: 0))
+        return mockExecutor
+    }
+
+    private func stubAuthStatus(_ mockExecutor: MockCLIExecutor, output: String) {
+        given(mockExecutor).execute(
+            binary: .any,
+            args: .matching { $0.starts(with: ["auth", "status"]) },
+            input: .any,
+            timeout: .any,
+            workingDirectory: .any,
+            autoResponses: .any
+        ).willReturn(CLIResult(output: output, exitCode: 0))
+    }
+
+    @Test
+    func `probe reports login required when usage has no quotas and auth status is logged out`() async throws {
+        let mockExecutor = makeExecutor(usageOutput: Self.loggedOutUsageOutput)
+        stubAuthStatus(mockExecutor, output: """
+        {
+          "loggedIn": false,
+          "authMethod": "none",
+          "apiProvider": "firstParty"
+        }
+        """)
+        let probe = ClaudeUsageProbe(cliExecutor: mockExecutor, accountInfoResolver: NoOpAccountInfoResolver())
+
+        await #expect(throws: ProbeError.sessionExpired()) {
+            try await probe.probe()
+        }
+    }
+
+    @Test
+    func `probe keeps parse error when usage has no quotas but auth status is logged in`() async throws {
+        let mockExecutor = makeExecutor(usageOutput: Self.loggedOutUsageOutput)
+        stubAuthStatus(mockExecutor, output: #"{"loggedIn": true, "authMethod": "claude.ai"}"#)
+        let probe = ClaudeUsageProbe(cliExecutor: mockExecutor, accountInfoResolver: NoOpAccountInfoResolver())
+
+        await #expect(throws: ProbeError.parseFailed("Could not find session usage")) {
+            try await probe.probe()
+        }
+    }
+
+    @Test
+    func `probe keeps parse error when auth status cannot be checked`() async throws {
+        let mockExecutor = makeExecutor(usageOutput: Self.loggedOutUsageOutput)
+        given(mockExecutor).execute(
+            binary: .any,
+            args: .matching { $0.starts(with: ["auth", "status"]) },
+            input: .any,
+            timeout: .any,
+            workingDirectory: .any,
+            autoResponses: .any
+        ).willThrow(ProbeError.executionFailed("unknown command"))
+        let probe = ClaudeUsageProbe(cliExecutor: mockExecutor, accountInfoResolver: NoOpAccountInfoResolver())
+
+        await #expect(throws: ProbeError.parseFailed("Could not find session usage")) {
+            try await probe.probe()
+        }
+    }
+
     // MARK: - Setup Token Environment Exclusion Tests
 
     @Test

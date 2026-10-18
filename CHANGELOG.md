@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - A Grok account that has not spent anything in the current period showed no usage at all. xAI omits zero-valued fields from the billing response, so an active period without `creditUsagePercent` is now reported as 100% remaining.
 - The Claude API probe kept failing with `invalid_grant` after a fresh `claude` login when an old `~/.claude/.credentials.json` was left on disk. The file always took priority over the Keychain (where Claude Code on macOS stores its login), so the revoked file token shadowed the new one. The Keychain credential is now used whenever its token expires later than the file's.
+- A logged-out Claude Code CLI showed a generic "Could not find session usage" error. Recent CLI versions render the Usage tab without quotas and without any "not logged in" text, so when the session quota is missing MyMeter now asks `claude auth status` and, if logged out, reports "Session expired. Run `claude` in terminal to log in again."
 - Grok `GROK_HOME` paths now follow the CLI's own layout (`$GROK_HOME/auth.json`, default `~/.grok`). Picking a folder signed in with `GROK_HOME=~/.grok-work grok login` previously looked for `~/.grok-work/.grok/auth.json` and failed.
 
 ---
